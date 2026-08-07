@@ -1,0 +1,589 @@
+1. 为什么直接 return（HTTP）在实时上位机中行不通？
+巨大的性能开销（握手太重）：HTTP 是无状态的。每次前端向 Python 要数据，浏览器和后端都要经历一次“建立 TCP 连接 ->
+ 发送一大堆 HTTP 协议头（Headers）-> Python 处理 -> 返回数据 -> 断开连接”。在 100ms 的频率下，
+这意味着一秒钟要进行 10 次完整的建立和断开连接。工控机的 CPU 会瞬间被这种无意义的“网络握手”占满。
+
+2. 为什么 WebSocket 是实时波形的完美解法？
+WebSocket 是一种全双工、长连接的协议。
+它的工作流程是：只需一次握手：网页刚打开时，Vue 向 Python 发起一次 WebSocket 连接。一旦连接成功，这条通道就永远保持打开状态，直到你关闭网页。
+后端主动推（Push）：Python 的采集线程一旦从 PLC 读到了新数据，不需要等待 Vue 来问，直接顺着这条管道把数据“滋”到前端（通过 await websocket.send_json()）。
+极低的开销：因为通道一直开着，每次传数据只有纯粹的寄存器数值，没有任何多余的 HTTP 协议头。
+
+
+将配置信息存入mysql,
+
+influxdb可以存一般的数据吗InfluxDB 可以存一般的数据，但它并不是为此设计的，强行使用会导致严重的性能和存储问题。
+InfluxDB 是一款专门的时序数据库（Time Series Database）。
+它要求存储的数据必须包含一个时间戳（Timestamp）。为了让您直观了解，我们可以把“一般数据”分为两类来看 InfluxDB 的支持情况：
+1. 带有时间属性的“一般数据”（完全可以存）如果您的业务数据是随着时间推移不断产生的，即使它看起来像普通的业务记录，InfluxDB 也能高效处理。
+可以存的例子：用户的登录日志、电商系统的每笔订单生成记录、网站的页面访问（PV）流水、应用报错日志。优势：写入速度极快，自动按时间分区，支持自动过期清理（TTL），
+非常适合做报表统计和趋势分析。2. 传统关系型的“一般数据”（绝对不建议存）如果您的数据是需要频繁修改、删除，或者属于实体状态的数据，
+InfluxDB 会非常难用。不适合存的例子：用户账户资料（姓名、密码、余额）、商品库存信息、员工花名册、权限配置表。为什么不行？没有传统的 UPDATE 和 DELETE：
+InfluxDB 的设计是“只追加写入”。虽然可以覆盖或删除，但代价极高，会严重拖慢数据库性能。不支持多表关联（Join）：它无法像 MySQL 那样通过外键把用户表和订单表关联起来。高基数（High Cardinality）灾难：如果把经常变动的值（如身份证号、唯一的订单号）作为 InfluxDB 的标签（Tag），
+会导致内存暴涨甚至死机
+
+
+
+
+#💡 最终推荐的技术栈组合
+后端：Python 3.x + FastAPI（天生支持异步/Asyncio，处理 Modbus TCP 并发和 WebSocket 极其高效）。
+前端：Vue 3 + Vite + Vant（专门针对移动端的 Vue 组件库，如果想用同一套也可以用 Element Plus） + ECharts。
+桌面端外壳：Electron（仅打包给工控机使用）。
+
+
+
+
+################
+1.后端核心代码(路由，读写PLC,获取历史数据，推送数据到前端)
+################
+
+import uvicorn
+from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+# 1. 解决跨域问题（允许 Vue 前端和手机端访问）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # 生产环境建议指定具体 IP
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 2. 普通 HTTP 接口（用于手机或本地 Vue 控制设备）
+@app.post("/api/control")
+def control_device(command: dict):
+    # 这里编写 Modbus TCP 写入逻辑
+    print(f"收到控制指令: {command}")
+    return {"status": "success", "msg": "指令已发送给 PLC"}
+
+# 3. WebSocket 接口（用于向手机和本地 Vue 实时推送 Modbus 数据）
+@app.websocket("/ws/data")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            # 这里可以循环读取 Modbus 寄存器，然后推送
+			# 这里采集和推送可以每 100ms 推送一次，写数据可以2min一次
+            mock_plc_data = {"temperature": 25.6, "status": "running"}
+            await websocket.send_json(mock_plc_data)
+            await asyncio.sleep(0.1) # 每 100ms 推送一次
+    except Exception as e:
+        print(f"客户端断开连接: {e}")
+
+# 4. Web 接口：对外远程管理 ====================
+# 远程查询接口：手机端向 InfluxDB 索要过去 1 小时的历史趋势图表
+@app.get("/api/history")
+def get_history_data(range_str: str = "-1h"):
+    db_client = InfluxDBClient(url="http://localhost:8086", token="YOUR_TOKEN", org="YOUR_ORG")
+    query_api = db_client.query_api()
+    # 编写 InfluxDB 的 Flux 查询语句
+    flux_query = f'''
+    from(bucket: "your_bucket")
+      |> range(start: {range_str})
+      |> filter(fn: (r) => r["_measurement"] == "factory_line_01")
+      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+    '''
+    result = query_api.query(org="your_org", query=flux_query)
+    
+    history_list = []
+    for table in result:
+        for record in table.records:
+            history_list.append({
+                "time": record.get_time(),
+                "temperature": record.values.get("temperature"),
+                "pressure": record.values.get("pressure"),
+                "total_count": record.values.get("total_count")
+            })
+    return {"status": "success", "data": history_list}
+
+if __name__ == "__main__":
+    # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+
+
+
+
+################
+2.influxdb3 生成token
+################
+
+influxdb3 create token --admin
+#特别注意
+ 只显示一次：在很多新版本中（如 3.x），Token 在生成的瞬间显示过一次之后，出于安全考虑，数据库就不会再明文展示它了。
+ 如果不小心关掉窗口且没保存，你就只能重新生成一个新的。安全风险：不要把 Token 直接硬编码推到开源的 GitHub 代码库中，建议将其放入 .env 环境配置文件里。
+
+#influxDB的读取
+
+from influxdb_client_3 import InfluxDBClient3
+
+# 1. 初始化客户端
+client = InfluxDBClient3(
+    host="http://localhost:8181",
+    token="您的TOKEN",
+    database="您的数据库名"
+)
+
+# 2. 编写 SQL 查询语句
+query = "SELECT time, cpu_usage FROM cpu_metrics WHERE time >= NOW() - INTERVAL '10 minutes'"
+
+# 3. 执行查询
+table = client.query(query)
+
+# 4. 转换成 Pandas DataFrame 方便分析（可选）
+df = table.to_pandas()
+print(df)
+
+
+
+
+################
+3.写入influxDB代码
+################
+
+import time
+from pyModbusTCP.client import ModbusClient
+from influxdb_client import InfluxDBClient, Point, WritePrecision
+from influxdb_client.client.write_api import SYNCHRONOUS
+
+# ==================== 1. 配置参数 ====================
+# Modbus TCP 配置
+PLC_IP = '127.0.0.1'
+PLC_PORT = 502
+
+# InfluxDB 配置（请根据您的实际后台填写）
+INFLUX_URL = "http://localhost:8086"
+INFLUX_TOKEN = "这里替换成你从InfluxDB后台生成的Token"
+INFLUX_ORG = "你的组织名称"
+INFLUX_BUCKET = "你的存储桶名称"
+
+# ==================== 2. 初始化连接 ====================
+# 初始化 Modbus
+modbus_client = ModbusClient(host=PLC_IP, port=PLC_PORT, auto_open=True)
+
+# 初始化 InfluxDB 客户端
+influx_client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
+# 激活写入 API (使用同步写入模式，适合入门调试)
+write_api = influx_client.write_api(write_options=SYNCHRONOUS)
+
+print("正在启动上位机采集与存储服务...")
+
+# ==================== 3. 核心循环采集 ====================
+try:
+    while True:
+        # 读取保持寄存器（从地址 0 开始，连续读 3 个）
+        # 假设：regs[0]是温度，regs[1]是压力，regs[2]是产量
+        regs = modbus_client.read_holding_registers(0, 3)
+        
+        if regs:
+            temp_val = regs[0]
+            press_val = regs[1]
+            count_val = regs[2]
+            print(f"成功读取PLC -> 温度:{temp_val}, 压力:{press_val}, 产量:{count_val}")
+            
+            # 创建一个 InfluxDB 数据点 (Point)
+            # measurement 类似于表名（如设备名 device_01）
+            # tag 类似于索引（用于分类筛选，如车间号）
+            # field 是具体的物理量（数值数据）
+            point = Point("device_status") \
+                .tag("workshop", "line_A") \
+                .field("temperature", float(temp_val)) \
+                .field("pressure", float(press_val)) \
+                .field("production_count", int(count_val)) \
+                .time(time.time_ns(), WritePrecision.NS) # 自动打上当前纳米级时间戳
+            
+            try:
+                # 写入数据库
+                write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=point)
+                print(" -> 数据已成功存入 InfluxDB")
+            except Exception as db_err:
+                print(f" -> 数据库写入失败: {db_err}")
+                
+        else:
+            print("PLC 读取失败，请检查网络...")
+            
+        # 采集频率：每隔 1 秒采集并存储一次
+        time.sleep(1)
+
+except KeyboardInterrupt:
+    print("\n程序已手动停止。")
+    # 关闭连接，释放资源
+    modbus_client.close()
+    write_api.close()
+    influx_client.close()
+
+
+
+
+
+
+
+########################
+4.Vue 3 + Python (FastAPI)实时通信最小demo
+########################
+
+pip install fastapi uvicorn
+
+
+第一步：编写 Python后端服务 (server.py)
+import asyncio
+import random
+from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+
+app = FastAPI()
+
+# 允许跨域，保证本地 Vue 项目和手机端能够正常连接
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.websocket("/ws/live")
+async def websocket_endpoint(websocket: WebSocket):
+    # 1. 接受前端的连接请求
+    await websocket.accept()
+    print("【后端提示】发现新的前端客户端已连接！")
+    
+    try:
+        while True:
+            # 2. 模拟 PLC 数据产生（实际开发中这里改为读取内存缓存或硬件）
+            mock_data = {
+                "temperature": round(random.uniform(20.0, 35.0), 1), # 模拟 20~35 度
+                "pressure": round(random.uniform(4.0, 6.0), 2),      # 模拟 4~6 Mpa
+                "status": "RUNNING"
+            }
+            
+            # 3. 发送 JSON 数据给前端 Vue
+            await websocket.send_json(mock_data)
+            
+            # 4. 每隔 500 毫秒推送一次（可自由调整为 100ms）
+            await asyncio.sleep(0.5)
+            
+    except Exception as e:
+        print(f"【后端提示】客户端已断开连接原因: {e}")
+
+if __name__ == "__main__":
+    # 监听 0.0.0.0，不仅本地能访问，局域网内的手机输入电脑 IP 也能访问
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+
+第二步：编写 Vue 3 前端页面 (App.vue)
+<template>
+  <div class="app-container">
+    <h1>工业上位机 - WebSocket 实时通信测试</h1>
+    
+    <!-- 状态显示栏 -->
+    <div class="connection-status" :class="{ 'connected': isConnected }">
+      网络状态：{{ isConnected ? '已连接 (ONLINE)' : '断开中 (OFFLINE)' }}
+    </div>
+
+    <!-- 数据实时看板 -->
+    <div class="data-board">
+      <div class="data-card">
+        <span class="label">实时温度</span>
+        <span class="value">{{ plcData.temperature }} ℃</span>
+      </div>
+      <div class="data-card">
+        <span class="label">实时压力</span>
+        <span class="value">{{ plcData.pressure }} Mpa</span>
+      </div>
+      <div class="data-card">
+        <span class="label">系统状态</span>
+        <span class="value status-text">{{ plcData.status }}</span>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted, onBeforeUnmount } from 'vue';
+
+// 1. 定义响应式变量
+const isConnected = ref(false);
+const plcData = ref({ temperature: 0.0, pressure: 0.0, status: 'UNKNOWN' });
+let socket = null;
+
+// 2. 建立 WebSocket 连接函数
+const initWebSocket = () => {
+  // 如果在电脑本机测试，保持 localhost；如果要手机访问，请改为工控机的局域网 IP
+  socket = new WebSocket('ws://localhost:8000/ws/live');
+
+  // 连接成功事件
+  socket.onopen = () => {
+    isConnected.value = true;
+    console.log('【前端提示】成功连接到 Python 后端 WebSocket！');
+  };
+
+  // 接收到后端实时数据事件
+  socket.onmessage = (event) => {
+    // 解析后端传过来的 JSON 字符串
+    const res = JSON.parse(event.data);
+    // 直接赋值，Vue 3 会自动、高效地刷新界面上对应的数字
+    plcData.value = res;
+  };
+
+  // 连接关闭事件
+  socket.onclose = () => {
+    isConnected.value = false;
+    console.log('【前端提示】连接已断开，3秒后尝试自动重连...');
+    setTimeout(initWebSocket, 3000); // 掉线自动重连机制
+  };
+
+  // 发生错误事件
+  socket.onerror = (error) => {
+    console.error('【前端提示】WebSocket 发生错误:', error);
+  };
+};
+
+// 3. 生命周期：组件加载时启动连接
+onMounted(() => {
+  initWebSocket();
+});
+
+// 4. 生命周期：组件销毁时关闭连接，释放工控机内存
+onBeforeUnmount(() => {
+  if (socket) socket.close();
+});
+</script>
+
+<style scoped>
+.app-container {
+  max-width: 800px;
+  margin: 50px auto;
+  font-family: Arial, sans-serif;
+  text-align: center;
+}
+h1 { color: #333; }
+.connection-status {
+  display: inline-block;
+  padding: 8px 15px;
+  background-color: #ff4d4f;
+  color: white;
+  border-radius: 20px;
+  font-weight: bold;
+  margin-bottom: 30px;
+}
+.connection-status.connected {
+  background-color: #52c41a;
+}
+.data-board {
+  display: flex;
+  justify-content: space-around;
+  gap: 20px;
+}
+.data-card {
+  flex: 1;
+  background: #f0f2f5;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.label {
+  display: block;
+  color: #8c8c8c;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+.value {
+  font-size: 28px;
+  font-weight: bold;
+  color: #1890ff;
+}
+.status-text { color: #faad14; }
+</style>
+
+
+
+
+###################
+5.vue Echarts代码
+###################
+
+<template>
+  <div class="monitor-container">
+    <!-- 上方状态看板 -->
+    <div class="status-dash">
+      <div class="card">当前温度：<span>{{ currentData.temperature.toFixed(1) }} ℃</span></div>
+      <div class="card">当前压力：<span>{{ currentData.pressure.toFixed(2) }} Mpa</span></div>
+      <div class="card">累计产量：<span>{{ currentData.count }} 件</span></div>
+    </div>
+    
+    <!-- 下方 ECharts 炫酷波形图容器 -->
+    <div ref="chartRef" class="chart-box"></div>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted, onBeforeUnmount, reactive } from 'vue';
+import * as echarts from 'echarts';
+
+// 1. 响应式变量与数据缓存
+const chartRef = ref(null);
+let myChart = null;
+const currentData = reactive({ temperature: 0.0, pressure: 0.0, count: 0 });
+
+// 内存中维护的实时数组（用于图表滚动）
+const timeData = [];
+const tempData = [];
+const pressData = [];
+const MAX_POINTS = 100; // 图表最多显示最近的 100 个数据点，防止内存溢出
+
+let ws = null;
+
+// 2. 初始化 ECharts 配置
+const initChart = () => {
+  if (!chartRef.value) return;
+  myChart = echarts.init(chartRef.value, 'dark'); // 使用内置暗黑科技感主题
+
+  const option = {
+    title: { text: '设备实时参数监控 (100ms)', left: 'center', textStyle: { color: '#00ffcc' } },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    legend: { data: ['温度 (℃)', '压力 (Mpa)'], top: '10%' },
+    grid: { left: '5%', right: '5%', bottom: '10%', containLabel: true },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: timeData,
+      axisLine: { lineStyle: { color: '#444' } }
+    },
+    yAxis: [
+      { type: 'value', name: '温度', min: 0, max: 100, axisLabel: { formatter: '{value} ℃' } },
+      { type: 'value', name: '压力', min: 0, max: 10, position: 'right', axisLabel: { formatter: '{value} Mpa' } }
+    ],
+    series: [
+      {
+        name: '温度 (℃)',
+        type: 'line',
+        symbol: 'none', // 隐藏数据点的小圆圈，极大提升渲染性能
+        smooth: true,   // 开启平滑曲线
+        yAxisIndex: 0,
+        data: tempData,
+        lineStyle: { width: 3, color: '#ff3366' }, // 炫酷红
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(255, 51, 102, 0.4)' },
+            { offset: 1, color: 'rgba(255, 51, 102, 0)' }
+          ])
+        }
+      },
+      {
+        name: '压力 (Mpa)',
+        type: 'line',
+        symbol: 'none',
+        smooth: true,
+        yAxisIndex: 1,
+        data: pressData,
+        lineStyle: { width: 3, color: '#00ffcc' }, // 科技绿
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(0, 255, 204, 0.4)' },
+            { offset: 1, color: 'rgba(0, 255, 204, 0)' }
+          ])
+        }
+      }
+    ]
+  };
+
+  myChart.setOption(option);
+};
+
+// 3. 建立 WebSocket 连接
+const connectWS = () => {
+  // 如果是手机端访问，请将 localhost 替换为工控机的局域网实际 IP 地址（如 192.168.1.100）
+  ws = new WebSocket('ws://localhost:8000/ws/realtime');
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    
+    // 更新上方的数字卡片文本
+    currentData.temperature = data.temperature;
+    currentData.pressure = data.pressure;
+    currentData.count = data.count;
+
+    // 格式化当前时间为 HH:mm:ss
+    const nowStr = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+
+    // 动态向数组末尾追加数据
+    timeData.push(nowStr);
+    tempData.push(data.temperature);
+    pressData.push(data.pressure);
+
+    // 关键优化：如果超过最大点数，把最老的数据踢出去，实现曲线向左平移的滚动效果
+    if (timeData.length > MAX_POINTS) {
+      timeData.shift();
+      tempData.shift();
+      pressData.shift();
+    }
+
+    // 关键性能优化：只更新发生变化的数据集(Data)，不要重新 set 整个 option 结构
+    myChart.setOption({
+      xAxis: { data: timeData },
+      series: [
+        { data: tempData },
+        { data: pressData }
+      ]
+    });
+  };
+
+  ws.onerror = (err) => { console.error('WebSocket 发生错误:', err); };
+  ws.onclose = () => {
+    console.log('WebSocket 连接断开，3秒后尝试重连...');
+    setTimeout(connectWS, 3000); // 工业环境必备：掉线自动重连机制
+  };
+};
+
+// 4. 生命周期管理
+onMounted(() => {
+  initChart();
+  connectWS();
+  // 响应式监听窗口大小变化，自动缩放图表（完美适配手机横竖屏切换）
+  window.addEventListener('resize', () => myChart && myChart.resize());
+});
+
+onBeforeUnmount(() => {
+  if (ws) ws.close(); // 组件销毁时务必关闭连接，释放工控机内存
+  if (myChart) myChart.dispose(); // 销毁图表实例，防止内存泄漏
+});
+</script>
+
+<style scoped>
+.monitor-container {
+  padding: 20px;
+  background-color: #121212; /* 暗黑工业风背景 */
+  min-height: 100vh;
+  color: #fff;
+}
+.status-dash {
+  display: flex;
+  justify-content: space-around;
+  margin-bottom: 20px;
+}
+.card {
+  background: #1e1e1e;
+  padding: 15px 25px;
+  border-radius: 8px;
+  border: 1px solid #333;
+  font-size: 16px;
+}
+.card span {
+  font-size: 24px;
+  font-weight: bold;
+  color: #00ffcc;
+  margin-left: 10px;
+}
+.chart-box {
+  width: 100%;
+  height: 500px;
+  background: #1e1e1e;
+  border-radius: 12px;
+  padding: 10px;
+}
+</style>
