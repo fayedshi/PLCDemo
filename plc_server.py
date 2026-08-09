@@ -8,6 +8,7 @@ from datetime import datetime
 from pymodbus.client import AsyncModbusTcpClient
 from contextlib import asynccontextmanager
 import random
+import time
 
 # ==================== 1. 全局变量 ====================
 # 全局共享的 PLC 最新数据缓存（所有手机都来这里拿数据，不直接轰炸 PLC）
@@ -33,7 +34,7 @@ async def lifespan(app: FastAPI):
 
     influx_client=InfluxDBClient(url=DB_URL, token=DB_TOKEN)
     polling_job=asyncio.create_task(plc_polling_task())
-    storage_job=asyncio.create_task()
+    storage_job=asyncio.create_task(influx_storage_task)
     
     yield
     
@@ -66,8 +67,8 @@ async def partial_read(start_address, cnt):
     try:
         result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
         if not result.isError():
-            global_plc_cache = result.registers
-            print(f"【采集成功】温度数据: {global_plc_cache} | 时间: {datetime.now()}")
+            print(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
+            return result.registers
         else:
             print("【采集温度数据失败】PLC 内部错误响应")
     except Exception as e:
@@ -76,10 +77,36 @@ async def partial_read(start_address, cnt):
         print("与 PLC重连成功")
     
 
+import struct
+
+def registers_to_float(reg_high, reg_low):
+    """
+    将西门子 PLC 的两个 16 位寄存器转换为 32 位浮点数
+    :param reg_high: 第一个寄存器（地址较小的，高 16 位）
+    :param reg_low: 第二个寄存器（地址较大的，低 16 位）
+    """
+    # 按照大端序格式将两个 16 位无符号整数(H)打包成 4 字节二进制数据
+    raw_bytes = struct.pack(">HH", reg_high, reg_low)
+    
+    # 将这 4 字节数据按照大端序解包为 32 位浮点数(f)
+    float_val = struct.unpack(">f", raw_bytes)[0]
+    
+    return round(float_val, 4)
+
+# === 验证示例 ===
+# 假设 PLC 内部真实的浮点数是 50.5
+# 西门子 PLC 中读取出来的两个 16 位十进制整数分别为：16946 和 0
+# reg1 = 16946
+# reg2 = 0
+
+# result = siemens_registers_to_float(reg1, reg2)
+# print(f"解析西门子浮点数结果: {result}")  # 输出: 50.5
+
+
 # ==================== PLC 异步采集任务 ====================
 async def plc_polling_task():
     """该任务在后台独立运行，有且仅有它一个人维持与 PLC 的长连接"""
-    
+    global global_plc_cache
     while True:
         try:
             #使用 await 进行异步读取，读取期间绝对不卡死 FastAPI 服务器
@@ -96,20 +123,21 @@ async def plc_polling_task():
             #     print(f"【采集成功】温湿度数据: {global_temp_humidity_cache} | 时间: {datetime.now()}")
             # else:
             #     print("【采集温湿度数据失败】PLC 内部错误响应")
-            await partial_read(0,120)
+
+            global_plc_cache.extend(await partial_read(0,120))
             print("第1分片读取成功")
-            await partial_read(120,120)
+            global_plc_cache.extend(await partial_read(120,120))
             print("第2分片读取成功")
-            await partial_read(240,120)
+            global_plc_cache.extend(await partial_read(240,120))
             print("第3分片读取成功")
-            await partial_read(360,120)
+            global_plc_cache.extend(await partial_read(360,120))
             print("第4分片读取成功")
         except Exception as e:
             print(f"【采集异常】: {e}")
             await plc_client.connect()
             print("与 PLC重连成功")
             
-        # 💡 这里控制采集频率：每 100 毫秒（0.1秒）高频采集一次
+        # 这里控制采集频率：每 （1秒）高频采集一次
         await asyncio.sleep(1)
 
 async def influx_storage_task():
@@ -126,7 +154,7 @@ async def influx_storage_task():
             # regs = modbus_client.read_holding_registers(0, 3)
             
             if regs:
-                temp_val = regs[0]
+                temp_val = global_plc_cache[0]
                 press_val = regs[1]
                 count_val = regs[2]
                 print(f"成功读取PLC -> 温度:{temp_val}, 压力:{press_val}, 产量:{count_val}")
@@ -144,7 +172,7 @@ async def influx_storage_task():
                 
                 try:
                     # 写入数据库
-                    write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=point)
+                    write_api.write(record=point)
                     print(" -> 数据已成功存入 InfluxDB")
                 except Exception as db_err:
                     print(f" -> 数据库写入失败: {db_err}")
@@ -152,13 +180,13 @@ async def influx_storage_task():
             else:
                 print("PLC 读取失败，请检查网络...")
                 
-            # 采集频率：每隔 1 秒采集并存储一次
-            time.sleep(1)
+            # 每隔1 min存储一次
+            await asyncio.sleep(60)
 
     except KeyboardInterrupt:
         print("\n程序已手动停止。")
         # 关闭连接，释放资源
-        modbus_client.close()
+        plc_client.close()
         write_api.close()
         influx_client.close()
 

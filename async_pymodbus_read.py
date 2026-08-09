@@ -1,4 +1,3 @@
-# from pymodbus.client import ModbusTcpClient
 from pymodbus.client import AsyncModbusTcpClient
 async def read_plc():
     client = AsyncModbusTcpClient('192.168.0.20', port=502)

@@ -14,7 +14,4 @@ def read_plc():
         print("读取失败")
 
     client.close()
-    return  result.registers
-    
-
-# print(read_plc())          
+    return  result.registers   
