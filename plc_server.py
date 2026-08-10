@@ -2,13 +2,16 @@ import uvicorn
 import asyncio
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from influxdb_client import InfluxDBClient, Point, WritePrecision
-from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client_3 import InfluxDBClient3, Point, WritePrecision
+# from influxdb_client.client.write_api import SYNCHRONOUS
 from datetime import datetime
 from pymodbus.client import AsyncModbusTcpClient
 from contextlib import asynccontextmanager
-import random
+import httpx
 import time
+from str_join_util import  build_influx_line_protocol
+import pandas as pd
+from datetime import datetime, timedelta, timezone
 
 # ==================== 1. 全局变量 ====================
 # 全局共享的 PLC 最新数据缓存（所有手机都来这里拿数据，不直接轰炸 PLC）
@@ -18,9 +21,9 @@ plc_client = None
 influx_client=None
 PLC_IP='192.168.0.20'
 PLC_PORT=502
-DB_URL='192.168.0.100:8181'
-DB_TOKEN='apiv3_gfbZbQ6OB0qk3dWCCp7EFmUzNj23GX20aAZN_TSILbu0X1y18kncU8Uf3JcHtFfYPD9b887iNP37QmLJ-RIwCg'
-
+INFLUX_DB_URL='http://192.168.0.100:8181'
+INFLUX_TOKEN='apiv3_gfbZbQ6OB0qk3dWCCp7EFmUzNj23GX20aAZN_TSILbu0X1y18kncU8Uf3JcHtFfYPD9b887iNP37QmLJ-RIwCg'
+DATABASE_NAME='my_db'
 
 
 @asynccontextmanager
@@ -32,22 +35,33 @@ async def lifespan(app: FastAPI):
     await plc_client.connect()
     print("【lifespan】物理通道已建立")
 
-    influx_client=InfluxDBClient(url=DB_URL, token=DB_TOKEN)
     polling_job=asyncio.create_task(plc_polling_task())
-    storage_job=asyncio.create_task(influx_storage_task)
+    # 不等，先直接异步执行下面代码了，所以global_plc_cache为空
+    # await asyncio.sleep(5)
+    # print('sleeping 5 sec')
+    print('break',global_plc_cache)
+    storage_job=asyncio.create_task(influx_storage_task())
     
     yield
     
     # 关闭：断开 PLC 连接
     print("正在断开 PLC 连接...")
     polling_job.cancel()
+    storage_job.cancel()
 
     try:
         await polling_job
     except asyncio.CancelledError:# interupted exception
         pass
+
+    try:
+        await storage_job
+    except asyncio.CancelledError:# interupted exception
+        pass
+
     plc_client.close()
     print("采集任务已停止，与PLC的连接已释放完毕")
+    print("数据存储任务已停止")
 
 app = FastAPI(lifespan=lifespan)
 
@@ -63,11 +77,11 @@ app.add_middleware(
 
 # 最多读取120个寄存器
 async def partial_read(start_address, cnt):
-    global global_plc_cache, global_temp_humidity_cache
+    # global global_plc_cache, global_temp_humidity_cache
     try:
         result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
         if not result.isError():
-            print(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
+            # print(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
             return result.registers
         else:
             print("【采集温度数据失败】PLC 内部错误响应")
@@ -109,29 +123,18 @@ async def plc_polling_task():
     global global_plc_cache
     while True:
         try:
-            #使用 await 进行异步读取，读取期间绝对不卡死 FastAPI 服务器
-            # result = await plc_client.read_holding_registers(address=35, count=120, device_id=1) # 新版本 pymodbus 用 slave 代替 device_id
-            # if not result.isError():
-            #     global_plc_cache = result.registers
-            #     print(f"【采集成功】温度数据: {global_plc_cache} | 时间: {datetime.now()}")
-            # else:
-            #     print("【采集温度数据失败】PLC 内部错误响应")
-
-            # result = await plc_client.read_holding_registers(address=156, count=20, device_id=1) # 新版本 pymodbus 用 slave 代替 device_id
-            # if not result.isError():
-            #     global_temp_humidity_cache = result.registers
-            #     print(f"【采集成功】温湿度数据: {global_temp_humidity_cache} | 时间: {datetime.now()}")
-            # else:
-            #     print("【采集温湿度数据失败】PLC 内部错误响应")
-
-            global_plc_cache.extend(await partial_read(0,120))
-            print("第1分片读取成功")
-            global_plc_cache.extend(await partial_read(120,120))
-            print("第2分片读取成功")
-            global_plc_cache.extend(await partial_read(240,120))
-            print("第3分片读取成功")
-            global_plc_cache.extend(await partial_read(360,120))
-            print("第4分片读取成功")
+            result=await partial_read(35,120)
+            global_plc_cache += result
+            # print("第1分片读取成功")
+            # print(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: {datetime.now()}")
+            # print("先中止，",global_plc_cache[1])
+            # break
+            global_plc_cache.extend(await partial_read(120,20))
+            # print("第2分片读取成功")
+            # global_plc_cache.extend(await partial_read(240,120))
+            # print("第3分片读取成功")
+            # global_plc_cache.extend(await partial_read(360,120))
+            # print("第4分片读取成功")
         except Exception as e:
             print(f"【采集异常】: {e}")
             await plc_client.connect()
@@ -142,54 +145,107 @@ async def plc_polling_task():
 
 async def influx_storage_task():
     # 激活写入 API (使用同步写入模式，适合入门调试)
-    write_api = influx_client.write_api(write_options=SYNCHRONOUS)
-
-    print("正在启动上位机采集与存储服务...")
+    # write_api = influx_client.write_api(write_options=SYNCHRONOUS)
 
     # ==================== 3. 核心循环采集 ====================
     try:
+        print("正在启动上位机采集与存储服务...")
+        # print(global_plc_cache)
+        # print("************************...")
+        plc_channels={}
+        if not global_plc_cache:
+            await asyncio.sleep(2)
+        if not global_plc_cache:
+            print('Error global_plc_cache is null, to return')
+            return
+
         while True:
+
             # 读取保持寄存器（从地址 0 开始，连续读 3 个）
             # 假设：regs[0]是温度，regs[1]是压力，regs[2]是产量
             # regs = modbus_client.read_holding_registers(0, 3)
             
-            if regs:
-                temp_val = global_plc_cache[0]
-                press_val = regs[1]
-                count_val = regs[2]
-                print(f"成功读取PLC -> 温度:{temp_val}, 压力:{press_val}, 产量:{count_val}")
+            # if regs:
+            #     temp_val = global_plc_cache[0]
+            #     press_val = regs[1]
+            #     count_val = regs[2]
+            #     print(f"成功读取PLC -> 温度:{temp_val}, 压力:{press_val}, 产量:{count_val}")
                 
-                # 创建一个 InfluxDB 数据点 (Point)
-                # measurement 类似于表名（如设备名 device_01）
-                # tag 类似于索引（用于分类筛选，如车间号）
-                # field 是具体的物理量（数值数据）
-                point = Point("device_status") \
-                    .tag("workshop", "line_A") \
-                    .field("temperature", float(temp_val)) \
-                    .field("pressure", float(press_val)) \
-                    .field("production_count", int(count_val)) \
-                    .time(time.time_ns(), WritePrecision.NS) # 自动打上当前纳米级时间戳
+            #     # 创建一个 InfluxDB 数据点 (Point)
+            #     # measurement 类似于表名（如设备名 device_01）
+            #     # tag 类似于索引（用于分类筛选，如车间号）
+            #     # field 是具体的物理量（数值数据）
+            #     point = Point("device_status") \
+            #         .tag("workshop", "line_A") \
+            #         .field("temperature", float(temp_val)) \
+            #         .field("pressure", float(press_val)) \
+            #         .field("production_count", int(count_val)) \
+            #         .time(time.time_ns(), WritePrecision.NS) # 自动打上当前纳米级时间戳
                 
-                try:
-                    # 写入数据库
-                    write_api.write(record=point)
-                    print(" -> 数据已成功存入 InfluxDB")
-                except Exception as db_err:
-                    print(f" -> 数据库写入失败: {db_err}")
+            #     try:
+            #         # 写入数据库
+            #         write_api.write(record=point)
+            #         print(" -> 数据已成功存入 InfluxDB")
+            #     except Exception as db_err:
+            #         print(f" -> 数据库写入失败: {db_err}")
                     
-            else:
-                print("PLC 读取失败，请检查网络...")
-                
+            # else:
+            #     print("PLC 读取失败，请检查网络...")
+
+            for i in range(0,140):
+                plc_channels[f"temp{i}"] = global_plc_cache[i]
+                # print(global_plc_cache[i])
+                # print(i)
+            print('拼接后的字符串：',plc_channels)
+            # 元数据标签
+            device_tags = {
+                "plc_type": "s7-smart200",
+                "station_id": "line_01"
+            }
+
+            # 动态生成 120 个字段的行协议数据
+            print("开始调用build_influx_line_protocol")
+            influx_data_line = build_influx_line_protocol(
+                measurement="plc_temp_data", 
+                tags = device_tags, 
+                fields=plc_channels
+            )
+            print('拼接后的字符串：',influx_data_line)
+            
             # 每隔1 min存储一次
-            await asyncio.sleep(60)
+            await asyncio.sleep(3600)
+            await send_to_influx(influx_data_line)
+            # break
 
     except KeyboardInterrupt:
         print("\n程序已手动停止。")
         # 关闭连接，释放资源
         plc_client.close()
-        write_api.close()
         influx_client.close()
 
+async def send_to_influx(payload_text: str):
+    """
+    底层的异步发送函数，向 InfluxDB 发送 HTTP POST 请求
+    """
+    headers = {
+        "Authorization": f"Token {INFLUX_TOKEN}",
+        "Content-Type": "text/plain; charset=utf-8"
+    }
+    WRITE_URL = f"{INFLUX_DB_URL}/api/v3/write_lp?db={DATABASE_NAME}&precision=ns"
+
+    # 使用 httpx.AsyncClient 建立异步 HTTP 客户端
+    async with httpx.AsyncClient() as client:
+        try:
+            # content 参数接收纯文本的行协议数据（多行用 \n 分割）
+            response = await client.post(WRITE_URL, headers=headers, content=payload_text, timeout=10.0)
+            
+            # InfluxDB 3 写入成功时通常返回 204 No Content
+            if response.status_code == 204:
+                print(f"[成功] 成功异步写入数据块，大小: {len(payload_text.splitlines())} 行")
+            else:
+                print(f"[错误] 写入失败，状态码: {response.status_code}, 原因: {response.text}")
+        except Exception as e:
+            print(f"[异常] 异步发送过程中发生错误: {e}")\
 
 
 # 2. 普通 HTTP 接口（用于手机或本地 Vue 控制设备）
@@ -208,6 +264,7 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             plc_data = global_plc_cache
+            # print('in live ',global_plc_cache)
             await websocket.send_json(plc_data)
             # 根据前端发送不同数据
             # await websocket.send_json(global_temp_humidity_cache)
@@ -230,7 +287,7 @@ def get_history_data(range_str: str = "-1h"):
       |> filter(fn: (r) => r["_measurement"] == "factory_line_01")
       |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
     '''
-    result = query_api.query(org="your_org", query=flux_query)
+    result = query_api.query(query=flux_query)
     
     history_list = []
     for table in result:
@@ -242,6 +299,47 @@ def get_history_data(range_str: str = "-1h"):
                 "total_count": record.values.get("total_count")
             })
     return {"status": "success", "data": history_list}
+
+@app.get("/api/tempbytime")
+def get_history_data(input_time: str):
+    # db_client = InfluxDBClient(url="http://localhost:8086", token="YOUR_TOKEN", org="YOUR_ORG")
+    influx_client=InfluxDBClient3(host=INFLUX_DB_URL, token=INFLUX_TOKEN,database="my_db")
+
+    # 2. 定义 SQL 查询
+    # 注意：时间字符串需符合 RFC3339格式，并用单引号包裹
+    print('input_time',input_time)
+    start_time = f"{input_time}:00Z"
+    dt_obj = datetime.fromisoformat(input_time)
+    new_dt_obj = dt_obj + timedelta(minutes=1)
+    end_time = new_dt_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+    query = f"""
+        SELECT * 
+        FROM plc_temp_data 
+        WHERE time >= '{start_time}' AND time <= '{end_time}' 
+        order by time asc
+        limit 1
+        """
+    # end_time = "2023-10-01T23:59:59Z"
+
+    # 3. 执行查询并转换数据
+    try:
+        # language="sql" 显式指定使用 SQL引擎
+        print('to exectue',query)
+        table = influx_client.query(query=query, language="sql")
+
+        # 4. 将 PyArrow Table 转换为 Pandas DataFrame
+        if table.num_rows == 0:
+            return pd.DataFrame()
+        # 将 PyArrow Table 转换为 Pandas DataFrame 以便后续分析
+        df = table.to_pandas()
+        print('found data',df)
+        print(f"查询到 {len(df)} 条数据")
+        # print('df.head: ',df.head())
+        return df.to_dict(orient="records")[0]
+    except Exception as e:
+        print(f"查询失败: {e}")
+    finally:
+        influx_client.close()
 
 if __name__ == "__main__":
     # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
