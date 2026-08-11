@@ -12,11 +12,12 @@ import time
 from str_join_util import  build_influx_line_protocol
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+from date_util import to_utctime
 
 # ==================== 1. 全局变量 ====================
 # 全局共享的 PLC 最新数据缓存（所有手机都来这里拿数据，不直接轰炸 PLC）
 global_plc_cache = [] 
-global_temp_humidity_cache=[]
+global_display_temp_cache=[]
 plc_client = None
 influx_client=None
 PLC_IP='192.168.0.20'
@@ -120,7 +121,7 @@ def registers_to_float(reg_high, reg_low):
 # ==================== PLC 异步采集任务 ====================
 async def plc_polling_task():
     """该任务在后台独立运行，有且仅有它一个人维持与 PLC 的长连接"""
-    global global_plc_cache
+    global global_plc_cache, global_display_temp_cache
     while True:
         try:
             result=await partial_read(35,120)
@@ -130,6 +131,8 @@ async def plc_polling_task():
             # print("先中止，",global_plc_cache[1])
             # break
             global_plc_cache.extend(await partial_read(120,20))
+            global_display_temp_cache = [round(x / 10, 1) for x in global_plc_cache]
+
             # print("第2分片读取成功")
             # global_plc_cache.extend(await partial_read(240,120))
             # print("第3分片读取成功")
@@ -213,8 +216,9 @@ async def influx_storage_task():
             print('拼接后的字符串：',influx_data_line)
             
             # 每隔1 min存储一次
-            await asyncio.sleep(3600)
+            
             await send_to_influx(influx_data_line)
+            await asyncio.sleep(3600)
             # break
 
     except KeyboardInterrupt:
@@ -263,7 +267,7 @@ async def websocket_endpoint(websocket: WebSocket):
     print("【后端提示】发现新的前端客户端已连接！")
     try:
         while True:
-            plc_data = global_plc_cache
+            plc_data = global_display_temp_cache
             # print('in live ',global_plc_cache)
             await websocket.send_json(plc_data)
             # 根据前端发送不同数据
@@ -290,14 +294,6 @@ def get_history_data(range_str: str = "-1h"):
     result = query_api.query(query=flux_query)
     
     history_list = []
-    for table in result:
-        for record in table.records:
-            history_list.append({
-                "time": record.get_time(),
-                "temperature": record.values.get("temperature"),
-                "pressure": record.values.get("pressure"),
-                "total_count": record.values.get("total_count")
-            })
     return {"status": "success", "data": history_list}
 
 @app.get("/api/tempbytime")
@@ -308,17 +304,23 @@ def get_history_data(input_time: str):
     # 2. 定义 SQL 查询
     # 注意：时间字符串需符合 RFC3339格式，并用单引号包裹
     print('input_time',input_time)
-    start_time = f"{input_time}:00Z"
-    dt_obj = datetime.fromisoformat(input_time)
-    new_dt_obj = dt_obj + timedelta(minutes=1)
-    end_time = new_dt_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
-    query = f"""
-        SELECT * 
-        FROM plc_temp_data 
-        WHERE time >= '{start_time}' AND time <= '{end_time}' 
-        order by time asc
-        limit 1
-        """
+    # start_time = f"{input_time}:00Z"
+    # dt_obj = datetime.fromisoformat(input_time)
+    # new_dt_obj = dt_obj + timedelta(minutes=1)
+    # end_time = new_dt_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+    if not input_time:
+        query = f"""
+            SELECT * FROM plc_temp_data order by time desc limit 1
+            """
+    else:
+        start_time=to_utctime(input_time)
+        query = f"""
+            SELECT *
+            FROM plc_temp_data 
+            WHERE time >= '{start_time}' 
+            order by time asc
+            limit 1
+            """
     # end_time = "2023-10-01T23:59:59Z"
 
     # 3. 执行查询并转换数据
