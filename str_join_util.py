@@ -9,7 +9,7 @@ def build_influx_line_protocol(measurement, tags, fields, timestamp_ns=None):
     :param timestamp_ns: 纳秒时间戳，如果不传则使用当前时间
     """
 
-    print('within build_influx_line_protocol')
+    # print('within build_influx_line_protocol')
     # 1. 动态拼接 Tags (例如: device_id=plc_01,area=workshop_A)
     tag_str = ",".join([f"{k}={v}" for k, v in tags.items()])
     measurement_and_tags = f"{measurement},{tag_str}" if tag_str else measurement

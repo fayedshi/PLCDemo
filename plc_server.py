@@ -207,7 +207,7 @@ async def influx_storage_task():
             }
 
             # 动态生成 120 个字段的行协议数据
-            print("开始调用build_influx_line_protocol")
+            # print("开始调用build_influx_line_protocol")
             influx_data_line = build_influx_line_protocol(
                 measurement="plc_temp_data", 
                 tags = device_tags, 
@@ -218,7 +218,7 @@ async def influx_storage_task():
             # 每隔1 min存储一次
             
             await send_to_influx(influx_data_line)
-            await asyncio.sleep(3600)
+            await asyncio.sleep(1900)
             # break
 
     except KeyboardInterrupt:
@@ -321,7 +321,6 @@ def get_history_data(input_time: str):
             order by time asc
             limit 1
             """
-    # end_time = "2023-10-01T23:59:59Z"
 
     # 3. 执行查询并转换数据
     try:
@@ -334,7 +333,7 @@ def get_history_data(input_time: str):
             return pd.DataFrame()
         # 将 PyArrow Table 转换为 Pandas DataFrame 以便后续分析
         df = table.to_pandas()
-        print('found data',df)
+        print('found data\n',df)
         print(f"查询到 {len(df)} 条数据")
         # print('df.head: ',df.head())
         return df.to_dict(orient="records")[0]
@@ -342,6 +341,80 @@ def get_history_data(input_time: str):
         print(f"查询失败: {e}")
     finally:
         influx_client.close()
+
+
+
+@app.get("/api/temp-trend")
+def get_history_data(start_time: str,end_time: str):
+    # db_client = InfluxDBClient(url="http://localhost:8086", token="YOUR_TOKEN", org="YOUR_ORG")
+    influx_client=InfluxDBClient3(host=INFLUX_DB_URL, token=INFLUX_TOKEN,database="my_db")
+
+    # 2. 定义 SQL 查询
+    # 注意：时间字符串需符合 RFC3339格式，并用单引号包裹
+    print('input_time',start_time)
+    # 1. 动态生成 140 个列名的列表：['temp0', 'temp1', ..., 'temp139']
+    temp_cols = [f"temp{i}" for i in range(140)]
+    avg_sum_part = " + ".join(temp_cols)
+    min_max_params=", ".join(temp_cols)
+    start = to_utctime(start_time)
+    end = to_utctime(end_time)
+# -- 1. InfluxDB v3 核心函数：将时间戳按 1 小时(INTERVAL '1 HOUR')对齐，作为前端 X 轴时间
+    query = f"""
+        SELECT 
+        DATE_BIN(INTERVAL '1 HOUR', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time,
+        ROUND(AVG({avg_sum_part} / 140.0), 1) AS avg_temp,
+      
+        MIN(LEAST({min_max_params})) AS min_temp,
+        MAX(GREATEST({min_max_params})) AS max_temp
+    FROM 
+        plc_temp_data
+    WHERE 
+        time >= '{start}' AND time <= '{end}'  and temp0 is not null
+    GROUP BY 
+        chart_time
+    ORDER BY 
+        chart_time ASC;
+        """
+
+    # 3. 执行查询并转换数据
+    try:
+        # language="sql" 显式指定使用 SQL引擎
+        print('to exectue',query)
+        table = influx_client.query(query=query, language="sql")
+
+        # 4. 将 PyArrow Table 转换为 Pandas DataFrame
+        if table.num_rows == 0:
+            return pd.DataFrame()
+        # 将 PyArrow Table 转换为 Pandas DataFrame 以便后续分析
+        df = table.to_pandas()
+        print('found data\n',df)
+        print(f"查询到 {len(df)} 条数据")
+        df['time'] = df['chart_time'].dt.strftime('%m-%d %H:%M')
+        # 4. 对数据列进行四舍五入保留 1 位小数，并重命名为前端匹配的短字段名
+        # df['avg_temp'] = pd.to_numeric(df['avg_temp'].round(1),errors='coerce')
+        # df['min_temp'] = pd.to_numeric(df['min_temp'].round(1),errors='coerce')
+        # df['max_temp'] = pd.to_numeric(df['max_temp'].round(1),errors='coerce')
+
+        df['avg'] = (df['avg_temp']/10).round(1)
+        df['min'] = (df['min_temp']/10).round(1)
+        df['max'] = (df['max_temp']/10).round(1)
+        print('after sql')
+        # 5. 核心：只筛选前端需要的 4 列
+        final_df = df[['time', 'avg', 'min', 'max']]
+
+        # 6. 一键转为 Python 列表字典结构 (对应 JSON 中的 [{...}, {...}])
+        # orient='records' 是关键，它会自动处理 Pandas 中的 NaN 值为 Python 的 None (即 JSON 的 null)
+        json_structure = final_df.to_dict(orient='records')
+        print(json_structure)
+        # print('df.head: ',df.head())
+        return json_structure
+    except Exception as e:
+        print(f"查询失败: {e}")
+    finally:
+        influx_client.close()
+
+
+
 
 if __name__ == "__main__":
     # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
