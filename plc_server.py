@@ -12,7 +12,7 @@ import time
 from str_join_util import  build_influx_line_protocol
 import pandas as pd
 from datetime import datetime, timedelta, timezone
-from date_util import to_utctime
+from date_util import to_utctime, to_localtime
 
 # ==================== 1. 全局变量 ====================
 # 全局共享的 PLC 最新数据缓存（所有手机都来这里拿数据，不直接轰炸 PLC）
@@ -61,8 +61,8 @@ async def lifespan(app: FastAPI):
         pass
 
     plc_client.close()
-    print("采集任务已停止，与PLC的连接已释放完毕")
-    print("数据存储任务已停止")
+    print("###采集任务已停止，与PLC的连接已释放完毕")
+    print("###数据存储任务已停止")
 
 app = FastAPI(lifespan=lifespan)
 
@@ -78,22 +78,14 @@ app.add_middleware(
 
 # 最多读取120个寄存器
 async def partial_read(start_address, cnt):
-    # global global_plc_cache, global_temp_humidity_cache
-    try:
-        result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
-        if not result.isError():
-            # print(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
-            return result.registers
-        else:
-            print("【采集温度数据失败】PLC 内部错误响应")
-    except Exception as e:
-        print(f"【采集异常】: {e}")
-        await plc_client.connect()
-        print("与 PLC重连成功")
-    
+    result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
+    if not result.isError():
+        # print(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
+        return result.registers
+    else:
+        print("【采集温度数据失败】PLC 内部错误响应")
 
 import struct
-
 def registers_to_float(reg_high, reg_low):
     """
     将西门子 PLC 的两个 16 位寄存器转换为 32 位浮点数
@@ -132,7 +124,7 @@ async def plc_polling_task():
             # break
             global_plc_cache.extend(await partial_read(120,20))
             global_display_temp_cache = [round(x / 10, 1) for x in global_plc_cache]
-
+            # print(f"【采集成功】温度数据: {global_plc_cache} | 时间: {datetime.now()}")
             # print("第2分片读取成功")
             # global_plc_cache.extend(await partial_read(240,120))
             # print("第3分片读取成功")
@@ -163,62 +155,27 @@ async def influx_storage_task():
             return
 
         while True:
-
-            # 读取保持寄存器（从地址 0 开始，连续读 3 个）
-            # 假设：regs[0]是温度，regs[1]是压力，regs[2]是产量
-            # regs = modbus_client.read_holding_registers(0, 3)
-            
-            # if regs:
-            #     temp_val = global_plc_cache[0]
-            #     press_val = regs[1]
-            #     count_val = regs[2]
-            #     print(f"成功读取PLC -> 温度:{temp_val}, 压力:{press_val}, 产量:{count_val}")
-                
-            #     # 创建一个 InfluxDB 数据点 (Point)
-            #     # measurement 类似于表名（如设备名 device_01）
-            #     # tag 类似于索引（用于分类筛选，如车间号）
-            #     # field 是具体的物理量（数值数据）
-            #     point = Point("device_status") \
-            #         .tag("workshop", "line_A") \
-            #         .field("temperature", float(temp_val)) \
-            #         .field("pressure", float(press_val)) \
-            #         .field("production_count", int(count_val)) \
-            #         .time(time.time_ns(), WritePrecision.NS) # 自动打上当前纳米级时间戳
-                
-            #     try:
-            #         # 写入数据库
-            #         write_api.write(record=point)
-            #         print(" -> 数据已成功存入 InfluxDB")
-            #     except Exception as db_err:
-            #         print(f" -> 数据库写入失败: {db_err}")
-                    
-            # else:
-            #     print("PLC 读取失败，请检查网络...")
-
             for i in range(0,140):
                 plc_channels[f"temp{i}"] = global_plc_cache[i]
                 # print(global_plc_cache[i])
-                # print(i)
-            print('拼接后的字符串：',plc_channels)
-            # 元数据标签
             device_tags = {
                 "plc_type": "s7-smart200",
                 "station_id": "line_01"
             }
 
-            # 动态生成 120 个字段的行协议数据
-            # print("开始调用build_influx_line_protocol")
+            # 动态生成 140 个字段的行协议数据
             influx_data_line = build_influx_line_protocol(
                 measurement="plc_temp_data", 
                 tags = device_tags, 
                 fields=plc_channels
             )
-            print('拼接后的字符串：',influx_data_line)
+            if not influx_data_line:
+                continue
+            # print(f'拼接后的字符串： {influx_data_line}')
             
             # 每隔1 min存储一次
-            
             await send_to_influx(influx_data_line)
-            await asyncio.sleep(1900)
+            await asyncio.sleep(60)
             # break
 
     except KeyboardInterrupt:
@@ -270,8 +227,6 @@ async def websocket_endpoint(websocket: WebSocket):
             plc_data = global_display_temp_cache
             # print('in live ',global_plc_cache)
             await websocket.send_json(plc_data)
-            # 根据前端发送不同数据
-            # await websocket.send_json(global_temp_humidity_cache)
             # send to vue every 2 sec
             await asyncio.sleep(2)
     except Exception as e:
@@ -325,7 +280,7 @@ def get_history_data(input_time: str):
     # 3. 执行查询并转换数据
     try:
         # language="sql" 显式指定使用 SQL引擎
-        print('to exectue',query)
+        # print('to exectue',query)
         table = influx_client.query(query=query, language="sql")
 
         # 4. 将 PyArrow Table 转换为 Pandas DataFrame
@@ -360,16 +315,17 @@ def get_history_data(start_time: str,end_time: str):
     end = to_utctime(end_time)
 # -- 1. InfluxDB v3 核心函数：将时间戳按 1 小时(INTERVAL '1 HOUR')对齐，作为前端 X 轴时间
     query = f"""
+        
         SELECT 
-        DATE_BIN(INTERVAL '1 HOUR', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time,
-        ROUND(AVG({avg_sum_part} / 140.0), 1) AS avg_temp,
+        DATE_BIN(INTERVAL '10 minutes', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time,
+        ROUND(AVG(({avg_sum_part}) / 140.0), 1) AS avg_temp,
       
         MIN(LEAST({min_max_params})) AS min_temp,
         MAX(GREATEST({min_max_params})) AS max_temp
     FROM 
         plc_temp_data
     WHERE 
-        time >= '{start}' AND time <= '{end}'  and temp0 is not null
+        time >= '{start}' AND time <= '{end}' and temp0 is not null
     GROUP BY 
         chart_time
     ORDER BY 
@@ -379,7 +335,7 @@ def get_history_data(start_time: str,end_time: str):
     # 3. 执行查询并转换数据
     try:
         # language="sql" 显式指定使用 SQL引擎
-        print('to exectue',query)
+        # print('to exectue',query)
         table = influx_client.query(query=query, language="sql")
 
         # 4. 将 PyArrow Table 转换为 Pandas DataFrame
@@ -388,12 +344,11 @@ def get_history_data(start_time: str,end_time: str):
         # 将 PyArrow Table 转换为 Pandas DataFrame 以便后续分析
         df = table.to_pandas()
         print('found data\n',df)
-        print(f"查询到 {len(df)} 条数据")
-        df['time'] = df['chart_time'].dt.strftime('%m-%d %H:%M')
+        # print(f"查询到 {len(df)} 条数据")
+        df['time']=pd.to_datetime(df['chart_time'])+timedelta(hours=8)
+        df['time']=df['time'].dt.strftime('%y-%m-%d %H:%M')
         # 4. 对数据列进行四舍五入保留 1 位小数，并重命名为前端匹配的短字段名
         # df['avg_temp'] = pd.to_numeric(df['avg_temp'].round(1),errors='coerce')
-        # df['min_temp'] = pd.to_numeric(df['min_temp'].round(1),errors='coerce')
-        # df['max_temp'] = pd.to_numeric(df['max_temp'].round(1),errors='coerce')
 
         df['avg'] = (df['avg_temp']/10).round(1)
         df['min'] = (df['min_temp']/10).round(1)
@@ -401,7 +356,6 @@ def get_history_data(start_time: str,end_time: str):
         print('after sql')
         # 5. 核心：只筛选前端需要的 4 列
         final_df = df[['time', 'avg', 'min', 'max']]
-
         # 6. 一键转为 Python 列表字典结构 (对应 JSON 中的 [{...}, {...}])
         # orient='records' 是关键，它会自动处理 Pandas 中的 NaN 值为 Python 的 None (即 JSON 的 null)
         json_structure = final_df.to_dict(orient='records')

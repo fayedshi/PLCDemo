@@ -17,6 +17,9 @@ def build_influx_line_protocol(measurement, tags, fields, timestamp_ns=None):
     # 2. 动态拼接 400 个 Fields (例如: temp1=23.5,press2=101.3...)
     field_list = []
     for k, v in fields.items():
+        if(v>50000):# innormal figure to skip
+            print(f"****************************unnormal value occured: {v}")
+            return ''
         if isinstance(v, float):
             field_list.append(f"{k}={v}")  # 浮点数直接拼接
         elif isinstance(v, int):
