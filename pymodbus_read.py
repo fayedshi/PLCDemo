@@ -6,7 +6,7 @@ def read_plc():
     client.connect()
 
     # 使用 unit 替代 slave
-    result = client.read_holding_registers(address=316, count=10,device_id=1)
+    result = client.read_holding_registers(address=365, count=100,device_id=1)
 
     if not result.isError():
         print("读取数据:", result.registers)
@@ -15,3 +15,5 @@ def read_plc():
 
     client.close()
     return  result.registers   
+
+read_plc()

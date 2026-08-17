@@ -25,6 +25,8 @@ PLC_PORT=502
 INFLUX_DB_URL='http://192.168.0.100:8181'
 INFLUX_TOKEN='apiv3_gfbZbQ6OB0qk3dWCCp7EFmUzNj23GX20aAZN_TSILbu0X1y18kncU8Uf3JcHtFfYPD9b887iNP37QmLJ-RIwCg'
 DATABASE_NAME='my_db'
+plc_lock = asyncio.Lock()
+window_state = {"status": "stopped"}
 
 
 @asynccontextmanager
@@ -78,7 +80,8 @@ app.add_middleware(
 
 # 最多读取120个寄存器
 async def partial_read(start_address, cnt):
-    result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
+    async with plc_lock:
+        result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
     if not result.isError():
         # print(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
         return result.registers
@@ -175,7 +178,7 @@ async def influx_storage_task():
             
             # 每隔1 min存储一次
             await send_to_influx(influx_data_line)
-            await asyncio.sleep(60)
+            await asyncio.sleep(3600)
             # break
 
     except KeyboardInterrupt:
@@ -367,8 +370,30 @@ def get_history_data(start_time: str,end_time: str):
     finally:
         influx_client.close()
 
+# 获取状态接口
+@app.get("/api/window/status")
+async def get_window_status():
+    return window_state
 
 
+# 控制接口
+@app.post("/api/气调模块/window/control")
+async def control_single_window(action_code: int):
+    # action = payload.action
+    # if action not in ACTION_MAP:
+    #     raise HTTPException(status_code=400, detail="非法控制指令")
+
+    control_value = ACTION_MAP[action]
+
+    # 💡 写操作：跟后台轮询抢占同一个 plc_lock 锁
+    async with plc_lock:
+        # 独占物理连接，安全调用 write_register 写入数据
+        await plc_client.write_register(address=1, value=action_code)
+        
+        # 写入成功后，同步更新内存缓存
+        window_state["status"] = "opening" if action == "open" else ("closing" if action == "close" else "stopped")
+
+    return {"success": True, "current_status": window_state["status"]}
 
 if __name__ == "__main__":
     # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
