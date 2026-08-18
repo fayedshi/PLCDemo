@@ -18,6 +18,7 @@ from date_util import to_utctime, to_localtime
 # 全局共享的 PLC 最新数据缓存（所有手机都来这里拿数据，不直接轰炸 PLC）
 global_plc_cache = [] 
 global_display_temp_cache=[]
+dev_state_cache=[]
 plc_client = None
 influx_client=None
 PLC_IP='192.168.0.20'
@@ -25,6 +26,9 @@ PLC_PORT=502
 INFLUX_DB_URL='http://192.168.0.100:8181'
 INFLUX_TOKEN='apiv3_gfbZbQ6OB0qk3dWCCp7EFmUzNj23GX20aAZN_TSILbu0X1y18kncU8Uf3JcHtFfYPD9b887iNP37QmLJ-RIwCg'
 DATABASE_NAME='my_db'
+
+# dev_start_address={'win':1,'door':11,'fan':19,'exhaust':27,'ac':33}
+batch_dev_address={'win':31,'door':32}
 plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
 
@@ -44,7 +48,12 @@ async def lifespan(app: FastAPI):
     # print('sleeping 5 sec')
     print('break',global_plc_cache)
     storage_job=asyncio.create_task(influx_storage_task())
-    
+    # 本地远程切换，
+    await write_single_reg(0,2)
+    # 手动自动切换
+    await write_single_reg(399,2)
+    print('已切换为远程和手动')
+
     yield
     
     # 关闭：断开 PLC 连接
@@ -127,9 +136,12 @@ async def plc_polling_task():
             # break
             global_plc_cache.extend(await partial_read(120,20))
             global_display_temp_cache = [round(x / 10, 1) for x in global_plc_cache]
+
             # print(f"【采集成功】温度数据: {global_plc_cache} | 时间: {datetime.now()}")
             # print("第2分片读取成功")
-            # global_plc_cache.extend(await partial_read(240,120))
+
+            dev_state_cache=await partial_read(365,32)
+            
             # print("第3分片读取成功")
             # global_plc_cache.extend(await partial_read(360,120))
             # print("第4分片读取成功")
@@ -178,7 +190,7 @@ async def influx_storage_task():
             
             # 每隔1 min存储一次
             await send_to_influx(influx_data_line)
-            await asyncio.sleep(3600)
+            await asyncio.sleep(300)
             # break
 
     except KeyboardInterrupt:
@@ -212,6 +224,46 @@ async def send_to_influx(payload_text: str):
             print(f"[异常] 异步发送过程中发生错误: {e}")\
 
 
+
+async def write_single_reg(start_add: int, val:int):
+    async with plc_lock:
+        response = await plc_client.write_register(address=start_add, value=val, device_id=1, no_response_expected=False)
+    if response.isError():
+        print("写入异常")
+    else:
+        print("写入成功，当前寄存器值:", response)        
+
+# async def write_multi_regs(start_add: int, vals:list[int]):
+#     async with plc_lock:
+#         response = await plc_client.write_registers(address=start_add, values=vals, device_id=1, no_response_expected=False)
+#     if response.isError():
+#         print("写入异常")
+#     else:
+#         print("写入成功，当前寄存器值:", response)     
+#         return response.registers   
+
+# async def read_win_regs(start_add: int, len: int):
+#     async with plc_lock:
+#         result = await plc_client.read_holding_registers(address=start_add,count=len, device_id=1)
+#     if not result.isError():
+#         print(f"读取电动窗状态: {result.registers},  时间：{datetime.now()}")
+#         return result.registers
+#     else:
+#         print("读取失败")
+
+
+async def write_win_contrl(win_ids:list[int], action_code: int):
+    # global client
+    print('in write_win_contrl', win_ids)
+    start_add= start_address_map[win_ids[0]]
+    vals=[]
+    for i in range(0,len(win_ids)):
+        vals.append(action_code)
+    print('vals ',vals, 'start_add ',start_add)
+    await write_multi_regs(start_add, vals)    
+    
+
+
 # 2. 普通 HTTP 接口（用于手机或本地 Vue 控制设备）
 @app.post("/api/control")
 def control_device(command: dict):
@@ -235,6 +287,49 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"客户端断开连接: {e}")
 
+
+@app.websocket("/ws/dev-state")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    print("【后端提示】发现新的前端客户端已连接！")
+    try:
+        while True:
+            # plc_data = global_display_temp_cache
+            # print('in live ',global_plc_cache)
+            # for i in range(32):
+            await websocket.send_json(dev_state_cache)
+            # send to vue every 2 sec
+            await asyncio.sleep(1)
+    except Exception as e:
+        print(f"客户端断开连接: {e}")
+
+
+# todo: index need to be optimized
+# async def handle_dev_address(cate_type:str, index: int):
+#     return dev_start_address[str] + index-1 
+
+# 控制接口
+@app.post("/api/dev/control")
+async def control_dev(data: dict):
+    # print('in control wind')
+    category_type=data.get('category_type')
+    action_type=data.get('action_type')
+    dev_id=data.get('dev_id')
+    print(f'in control_dev 设备id {dev_id} , category_type: {category_type}, action_type: {action_type}')
+    dev_info=dev_id.split('-')
+    if dev_id:
+        # specific device
+        # dev_add = handle_dev_address(dev_info[0], dev_info[1])
+        await write_single_reg(dev_info[1], action_type)
+    else:
+        # batch devices
+        await write_single_reg(batch_dev_address[category_type], action_type)
+    # print(f'win ids {category_type}, action code {action_type}')
+    # 💡 写操作：跟后台轮询抢占同一个 plc_lock 锁
+    # async with plc_lock:
+    # await write_win_contrl(category_type, action_type)
+    print(f'写入PLC成功，设备id {dev_id} ')
+    return {"success": True}
 
 # 4. Web 接口：对外远程管理 ====================
 # 远程查询接口：手机端向 InfluxDB 索要过去 1 小时的历史趋势图表
