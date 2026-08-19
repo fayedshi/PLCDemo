@@ -28,7 +28,7 @@ INFLUX_TOKEN='apiv3_gfbZbQ6OB0qk3dWCCp7EFmUzNj23GX20aAZN_TSILbu0X1y18kncU8Uf3JcH
 DATABASE_NAME='my_db'
 
 # dev_start_address={'win':1,'door':11,'fan':19,'exhaust':27,'ac':33}
-batch_dev_address={'win':31,'door':32}
+batch_dev_address={'window':31,'door':32}
 plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
 
@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
     # 不等，先直接异步执行下面代码了，所以global_plc_cache为空
     # await asyncio.sleep(5)
     # print('sleeping 5 sec')
-    print('break',global_plc_cache)
+    # print('break',global_plc_cache)
     storage_job=asyncio.create_task(influx_storage_task())
     # 本地远程切换，
     await write_single_reg(0,2)
@@ -136,15 +136,6 @@ async def plc_polling_task():
             # break
             global_plc_cache.extend(await partial_read(120,20))
             global_display_temp_cache = [round(x / 10, 1) for x in global_plc_cache]
-
-            # print(f"【采集成功】温度数据: {global_plc_cache} | 时间: {datetime.now()}")
-            # print("第2分片读取成功")
-
-            dev_state_cache=await partial_read(365,32)
-            
-            # print("第3分片读取成功")
-            # global_plc_cache.extend(await partial_read(360,120))
-            # print("第4分片读取成功")
         except Exception as e:
             print(f"【采集异常】: {e}")
             await plc_client.connect()
@@ -161,7 +152,7 @@ async def influx_storage_task():
     try:
         print("正在启动上位机采集与存储服务...")
         # print(global_plc_cache)
-        # print("************************...")
+        # 内存中不一定会立即有数据，需要判断
         plc_channels={}
         if not global_plc_cache:
             await asyncio.sleep(2)
@@ -189,9 +180,8 @@ async def influx_storage_task():
             # print(f'拼接后的字符串： {influx_data_line}')
             
             # 每隔1 min存储一次
-            await send_to_influx(influx_data_line)
             await asyncio.sleep(300)
-            # break
+            await send_to_influx(influx_data_line)
 
     except KeyboardInterrupt:
         print("\n程序已手动停止。")
@@ -223,8 +213,6 @@ async def send_to_influx(payload_text: str):
         except Exception as e:
             print(f"[异常] 异步发送过程中发生错误: {e}")\
 
-
-
 async def write_single_reg(start_add: int, val:int):
     async with plc_lock:
         response = await plc_client.write_register(address=start_add, value=val, device_id=1, no_response_expected=False)
@@ -233,43 +221,28 @@ async def write_single_reg(start_add: int, val:int):
     else:
         print("写入成功，当前寄存器值:", response)        
 
-# async def write_multi_regs(start_add: int, vals:list[int]):
-#     async with plc_lock:
-#         response = await plc_client.write_registers(address=start_add, values=vals, device_id=1, no_response_expected=False)
-#     if response.isError():
-#         print("写入异常")
-#     else:
-#         print("写入成功，当前寄存器值:", response)     
-#         return response.registers   
 
-# async def read_win_regs(start_add: int, len: int):
-#     async with plc_lock:
-#         result = await plc_client.read_holding_registers(address=start_add,count=len, device_id=1)
-#     if not result.isError():
-#         print(f"读取电动窗状态: {result.registers},  时间：{datetime.now()}")
-#         return result.registers
-#     else:
-#         print("读取失败")
-
-
-async def write_win_contrl(win_ids:list[int], action_code: int):
-    # global client
-    print('in write_win_contrl', win_ids)
-    start_add= start_address_map[win_ids[0]]
-    vals=[]
-    for i in range(0,len(win_ids)):
-        vals.append(action_code)
-    print('vals ',vals, 'start_add ',start_add)
-    await write_multi_regs(start_add, vals)    
-    
-
-
-# 2. 普通 HTTP 接口（用于手机或本地 Vue 控制设备）
-@app.post("/api/control")
-def control_device(command: dict):
-    # 这里编写 Modbus TCP 写入逻辑
-    print(f"收到控制指令: {command}")
-    return {"status": "success", "msg": "指令已发送给 PLC"}
+# 控制接口
+@app.post("/api/dev/control")
+async def control_window(data: dict):
+    action_type = data.get('action_type')
+    dev_id=data.get('dev_id')
+    print(f'准备写入设备id {dev_id} , action_type: {action_type}')
+    try:
+        if dev_id:
+            dev_info = dev_id.split('-')
+            # specific device
+            # dev_add = handle_dev_address(dev_info[0], dev_info[1])
+            await write_single_reg(int(dev_info[1]), action_type)
+            print(f'写入PLC成功，设备id {dev_id}，动作 {action_type}')
+        else:
+            # batch devices
+            category_type = data.get('category_type')
+            await write_single_reg(batch_dev_address[category_type], action_type)
+            print(f'写入PLC全控设备{category_type}成功')
+    except Exception as e:
+            print(f"/api/dev/control 写入PLC异常: {e}")
+    return {"success": True}
 
 
 # 3. WebSocket 接口（用于向手机和本地 Vue 实时推送 Modbus 数据）
@@ -290,13 +263,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.websocket("/ws/dev-state")
 async def websocket_endpoint(websocket: WebSocket):
+    global dev_state_cache
     await websocket.accept()
     print("【后端提示】发现新的前端客户端已连接！")
     try:
         while True:
-            # plc_data = global_display_temp_cache
-            # print('in live ',global_plc_cache)
-            # for i in range(32):
+            dev_state_cache = await partial_read(365,32)
             await websocket.send_json(dev_state_cache)
             # send to vue every 2 sec
             await asyncio.sleep(1)
@@ -308,28 +280,6 @@ async def websocket_endpoint(websocket: WebSocket):
 # async def handle_dev_address(cate_type:str, index: int):
 #     return dev_start_address[str] + index-1 
 
-# 控制接口
-@app.post("/api/dev/control")
-async def control_dev(data: dict):
-    # print('in control wind')
-    category_type=data.get('category_type')
-    action_type=data.get('action_type')
-    dev_id=data.get('dev_id')
-    print(f'in control_dev 设备id {dev_id} , category_type: {category_type}, action_type: {action_type}')
-    dev_info=dev_id.split('-')
-    if dev_id:
-        # specific device
-        # dev_add = handle_dev_address(dev_info[0], dev_info[1])
-        await write_single_reg(dev_info[1], action_type)
-    else:
-        # batch devices
-        await write_single_reg(batch_dev_address[category_type], action_type)
-    # print(f'win ids {category_type}, action code {action_type}')
-    # 💡 写操作：跟后台轮询抢占同一个 plc_lock 锁
-    # async with plc_lock:
-    # await write_win_contrl(category_type, action_type)
-    print(f'写入PLC成功，设备id {dev_id} ')
-    return {"success": True}
 
 # 4. Web 接口：对外远程管理 ====================
 # 远程查询接口：手机端向 InfluxDB 索要过去 1 小时的历史趋势图表
@@ -399,7 +349,6 @@ def get_history_data(input_time: str):
 
 @app.get("/api/temp-trend")
 def get_history_data(start_time: str,end_time: str):
-    # db_client = InfluxDBClient(url="http://localhost:8086", token="YOUR_TOKEN", org="YOUR_ORG")
     influx_client=InfluxDBClient3(host=INFLUX_DB_URL, token=INFLUX_TOKEN,database="my_db")
 
     # 2. 定义 SQL 查询
@@ -465,30 +414,30 @@ def get_history_data(start_time: str,end_time: str):
     finally:
         influx_client.close()
 
-# 获取状态接口
-@app.get("/api/window/status")
-async def get_window_status():
-    return window_state
+# # 获取状态接口
+# @app.get("/api/window/status")
+# async def get_window_status():
+#     return window_state
 
 
-# 控制接口
-@app.post("/api/气调模块/window/control")
-async def control_single_window(action_code: int):
-    # action = payload.action
-    # if action not in ACTION_MAP:
-    #     raise HTTPException(status_code=400, detail="非法控制指令")
+# # 控制接口
+# @app.post("/api/气调模块/window/control")
+# async def control_single_window(action_code: int):
+#     # action = payload.action
+#     # if action not in ACTION_MAP:
+#     #     raise HTTPException(status_code=400, detail="非法控制指令")
 
-    control_value = ACTION_MAP[action]
+#     control_value = ACTION_MAP[action]
 
-    # 💡 写操作：跟后台轮询抢占同一个 plc_lock 锁
-    async with plc_lock:
-        # 独占物理连接，安全调用 write_register 写入数据
-        await plc_client.write_register(address=1, value=action_code)
+#     # 💡 写操作：跟后台轮询抢占同一个 plc_lock 锁
+#     async with plc_lock:
+#         # 独占物理连接，安全调用 write_register 写入数据
+#         await plc_client.write_register(address=1, value=action_code)
         
-        # 写入成功后，同步更新内存缓存
-        window_state["status"] = "opening" if action == "open" else ("closing" if action == "close" else "stopped")
+#         # 写入成功后，同步更新内存缓存
+#         window_state["status"] = "opening" if action == "open" else ("closing" if action == "close" else "stopped")
 
-    return {"success": True, "current_status": window_state["status"]}
+#     return {"success": True, "current_status": window_state["status"]}
 
 if __name__ == "__main__":
     # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
