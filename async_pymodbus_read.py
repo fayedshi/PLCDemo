@@ -1,7 +1,7 @@
 from pymodbus.client import AsyncModbusTcpClient
 import asyncio
 async def read_plc(start_address:int, len:int):
-    client = AsyncModbusTcpClient('192.168.0.20', port=502)
+    client = AsyncModbusTcpClient('192.168.0.20', port=503)
     try:
         await client.connect()
         print("连接成功")
