@@ -1,6 +1,7 @@
 # print('test')
 import time
-def build_influx_line_protocol(measurement, tags, fields, timestamp_ns=None):
+import asyncio
+async def build_influx_line_protocol(measurement, tags, fields, timestamp_ns=None):
     """
     动态将字典转换为 InfluxDB 3 标准行协议格式
     :param measurement: 表名 (str)
@@ -18,7 +19,9 @@ def build_influx_line_protocol(measurement, tags, fields, timestamp_ns=None):
     field_list = []
     for k, v in fields.items():
         if(v>50000):# innormal figure to skip
-            print(f"****************************unnormal value occured: {v}")
+            print(f"****************************Invalid value found: {v}")
+            print('PLC内部异常，等待2分钟...')
+            await asyncio.sleep(120)
             return ''
         if isinstance(v, float):
             field_list.append(f"{k}={v}")  # 浮点数直接拼接
@@ -32,7 +35,8 @@ def build_influx_line_protocol(measurement, tags, fields, timestamp_ns=None):
     # 3. 处理时间戳 (默认为当前纳秒时间戳)
     if timestamp_ns is None:
         timestamp_ns = time.time_ns()
-        
+
+    # timestamp_ns=1787304318447622000
     # 4. 组合成行协议：西门子数据_表名,标签 字段1=值1,字段2=值2 时间戳
     line = f"{measurement_and_tags} {field_str} {timestamp_ns}"
     # print(line)

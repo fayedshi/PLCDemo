@@ -2,17 +2,24 @@ import uvicorn
 import asyncio
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from influxdb_client_3 import InfluxDBClient3, Point, WritePrecision
-# from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client_3 import InfluxDBClient3
 from datetime import datetime
 from pymodbus.client import AsyncModbusTcpClient
 from contextlib import asynccontextmanager
 import httpx
-import time
 from str_join_util import  build_influx_line_protocol
 import pandas as pd
-from datetime import datetime, timedelta, timezone
-from date_util import to_utctime, to_localtime
+from datetime import datetime, timedelta
+from date_util import to_utctime
+import logging.config
+
+# 设置日志级别为 DEBUG，并自定义格式
+# logging.basicConfig(
+#     level=logging.error,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# )
+
+# logging.info('这是一条基础信息日志')
 
 # ==================== 1. 全局变量 ====================
 # 全局共享的 PLC 最新数据缓存（所有手机都来这里拿数据，不直接轰炸 PLC）
@@ -151,7 +158,7 @@ async def build_payload_str(data_cache, table, field_prefix):
         if not data_cache:
             await asyncio.sleep(2)
         if not data_cache:
-            print('Error data_cache is null, to return')
+            print('Error: data_cache is null, to return')
             return ''
         plc_channels={}
         # while True:
@@ -164,7 +171,7 @@ async def build_payload_str(data_cache, table, field_prefix):
         }
 
         # 动态生成 140 个字段的行协议数据
-        influx_data_line = build_influx_line_protocol(
+        influx_data_line = await build_influx_line_protocol(
             measurement=table, 
             tags = device_tags, 
             fields=plc_channels
@@ -192,13 +199,18 @@ async def influx_storage_task():
         #     return
         
         while True:
-            await asyncio.sleep(120)
+            await asyncio.sleep(300)
             influx_data_line = await build_payload_str(global_plc_cache,'plc_temp_data','temp')
             if not influx_data_line:
                 continue
             await send_to_influx(influx_data_line)
             print('【温度数据存储成功】')
+            # print('一次性退出')
+            # break
+            
             influx_data_line = await build_payload_str(global_humid_cache,'plc_humid_data','humid')
+            if not influx_data_line:
+                continue
             await send_to_influx(influx_data_line)
             print('【湿度数据存储成功】')
             #  每隔5 min存储一次
@@ -231,7 +243,6 @@ async def influx_storage_task():
         print("\n程序已手动停止。")
         # 关闭连接，释放资源
         plc_client.close()
-        # influx_client.close()
 
 async def send_to_influx(payload_text: str):
     """
@@ -275,8 +286,6 @@ async def control_window(data: dict):
     try:
         if dev_id:
             dev_info = dev_id.split('-')
-            # specific device
-            # dev_add = handle_dev_address(dev_info[0], dev_info[1])
             await write_single_reg(int(dev_info[1]), action_type)
             print(f'写入PLC成功，设备id {dev_id}，动作 {action_type}')
         else:
@@ -320,37 +329,34 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"ws/dev-state客户端断开连接 : {e}")
 
 
-# todo: index need to be optimized
-# async def handle_dev_address(cate_type:str, index: int):
-#     return dev_start_address[str] + index-1 
-
-
 # 4. Web 接口：对外远程管理 ====================
 # 远程查询接口：手机端向 InfluxDB 索要过去 1 小时的历史趋势图表
-@app.get("/api/history")
-def get_history_data(range_str: str = "-1h"):
-    db_client = InfluxDBClient(url="http://localhost:8086", token="YOUR_TOKEN", org="YOUR_ORG")
-    query_api = db_client.query_api()
-    # 编写 InfluxDB 的 Flux 查询语句
-    flux_query = f'''
-    from(bucket: "your_bucket")
-      |> range(start: {range_str})
-      |> filter(fn: (r) => r["_measurement"] == "factory_line_01")
-      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-    '''
-    result = query_api.query(query=flux_query)
+# @app.get("/api/history")
+# def get_history_data(range_str: str = "-1h"):
+#     db_client = InfluxDBClient(url="http://localhost:8086", token="YOUR_TOKEN", org="YOUR_ORG")
+#     query_api = db_client.query_api()
+#     # 编写 InfluxDB 的 Flux 查询语句
+#     flux_query = f'''
+#     from(bucket: "your_bucket")
+#       |> range(start: {range_str})
+#       |> filter(fn: (r) => r["_measurement"] == "factory_line_01")
+#       |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+#     '''
+#     result = query_api.query(query=flux_query)
     
-    history_list = []
-    return {"status": "success", "data": history_list}
+#     history_list = []
+#     return {"status": "success", "data": history_list}
 
 @app.get("/api/tempbytime")
-def get_history_data(input_time: str):
+def show_cords_temp(input_time: str):
+    print('input_time', input_time)
     # db_client = InfluxDBClient(url="http://localhost:8086", token="YOUR_TOKEN", org="YOUR_ORG")
     influx_client=InfluxDBClient3(host=INFLUX_DB_URL, token=INFLUX_TOKEN,database="my_db")
 
     # 2. 定义 SQL 查询
     # 注意：时间字符串需符合 RFC3339格式，并用单引号包裹
-    print('input_time',input_time)
+    
+    # input_time = obj.get('input_time')
     # start_time = f"{input_time}:00Z"
     # dt_obj = datetime.fromisoformat(input_time)
     # new_dt_obj = dt_obj + timedelta(minutes=1)
@@ -364,7 +370,7 @@ def get_history_data(input_time: str):
     else:
         start_time=to_utctime(input_time)
         query = f"""
-            SELECT {temp_cols} 
+            SELECT * 
             FROM plc_temp_data 
             WHERE time >= '{start_time}' 
             order by time asc
@@ -399,7 +405,7 @@ def get_history_data(start_time: str,end_time: str):
 
     # 2. 定义 SQL 查询
     # 注意：时间字符串需符合 RFC3339格式，并用单引号包裹
-    print('input_time',start_time)
+    print('start_time',start_time)
     # 1. 动态生成 140 个列名的列表：['temp0', 'temp1', ..., 'temp139']
     temp_cols = [f"temp{i}" for i in range(140)]
     avg_sum_part = " + ".join(temp_cols)
