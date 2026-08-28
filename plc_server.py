@@ -12,7 +12,9 @@ from contextlib import asynccontextmanager
 import httpx
 from str_join_util import  build_influx_line_protocol
 from datetime import datetime
+from database import Base, engine
 from user_requests import router as user_request_router
+from gran_router import router as gran_router
 
 # 设置日志级别为 DEBUG，并自定义格式
 # logging.basicConfig(
@@ -24,24 +26,17 @@ from user_requests import router as user_request_router
 
 # ==================== 1. 全局变量 ====================
 # 全局共享的 PLC 最新数据缓存（所有手机都来这里拿数据，不直接轰炸 PLC）
-# global_plc_cache = [] 
-global_humid_cache=[]
-global_display_temp_cache=[]
-dev_state_cache=[]
+
 plc_client = None
-# PLC_IP=''
-# PLC_PORT=''
-# INFLUX_DB_URL=''
-# INFLUX_TOKEN=''
+
 DATABASE_NAME='my_db'
 
 
-# 1. 🎯 解析参数并加载环境（必须在最外层）
+# 1. 解析参数并加载环境（必须在最外层）
 parser = argparse.ArgumentParser()
 parser.add_argument('--env', choices=['dev', 'test'], default='dev')
 args, _ = parser.parse_known_args()
 load_dotenv(dotenv_path=f".env.{args.env}")
-
 
 # dev_start_address={'win':1,'door':11,'fan':19,'exhaust':27,'ac':33}
 
@@ -62,24 +57,24 @@ async def partial_read(start_address, cnt):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # app.state.db_url = os.getenv("INFLUX_DB_URL", "127.0.0.1")
+    async with engine.begin() as conn:
+        # 如果表不存在，则自动创建（生产环境建议使用 Alembic 迁移）
+        await conn.run_sync(Base.metadata.create_all)
 
-    # INFLUX_DB_URL= os.getenv("INFLUX_DB_URL", "127.0.0.1")
-    # print('INFLUX_DB_URL',app.state.influx_db_url)
+    print("connected to mysql")
     app.state.plc_ip= os.getenv("PLC_IP", "127.0.0.1")
     app.state.plc_port=os.getenv("PLC_PORT")
 
     app.state.influx_db_url=os.getenv("INFLUX_DB_URL")
     app.state.influx_token=os.getenv("INFLUX_TOKEN")
     app.state.global_plc_cache = []
-    app.state.global_display_temp_cach=[]
+    app.state.global_display_temp_cache=[]
     app.state.global_humid_cache=[]
     app.state.partial_read=partial_read
     app.state.write_single_reg=write_single_reg
 
     print("\n--- 📊 当前环境配置变量 ---")
     print(f"🔗 后端服务 IP (DB_URL): {app.state.influx_db_url}")
-    # print(f"🔌 PLC端口号 (PLC_PORT): {PLC_PORT}")
 
     # 全局初始化一次异步客户端
     global plc_client
@@ -119,6 +114,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(user_request_router, tags=["用户管理"])
+app.include_router(gran_router, tags=["仓房管理"])
 
 
 # 1. 解决跨域问题（允许 Vue 前端和手机端访问）
@@ -188,30 +184,34 @@ async def plc_polling_task():
 
 async def build_payload_str(data_cache, table, field_prefix):
     # 内存中不一定会立即有数据，需要判断
-    if not data_cache:
-        await asyncio.sleep(2)
-    if not data_cache:
-        print('Error: data_cache is null, to return')
-        return ''
-    plc_channels={}
-    for i in range(0,140):
-        plc_channels[f"{field_prefix}{i}"] = data_cache[i]
-        # print(global_plc_cache[i])
-    device_tags = {
-        "plc_type": "s7-smart200",
-        "station_id": "line_01"
-    }
+    try:
+        if not data_cache:
+            await asyncio.sleep(2)
+            print('Error: data_cache is null, check next round')
+            return ''
+        plc_channels={}
+        for i in range(0,140):
+            plc_channels[f"{field_prefix}{i}"] = data_cache[i]
+            # print(global_plc_cache[i])
+        device_tags = {
+            "plc_type": "s7-smart200",
+            "station_id": "line_01"
+        }
 
-    # 动态生成 140 个字段的行协议数据
-    influx_data_line = await build_influx_line_protocol(
-        measurement=table, 
-        tags = device_tags, 
-        fields=plc_channels
-    )
-    
-    print(f'拼接后的字符串： {influx_data_line}')
-    return influx_data_line
+        # 动态生成 140 个字段的行协议数据
+        influx_data_line = await build_influx_line_protocol(
+            measurement=table, 
+            tags = device_tags, 
+            fields=plc_channels
+        )
+        
+        print(f'拼接后的字符串： {influx_data_line}')
+        return influx_data_line
+    except Exception as e:
+        raise Exception('##############build_payload_str 发生异常',e)
 
+
+# todo: seperate as async minor tasks for temp and humid data storage
 async def influx_storage_task():
     # ==================== 3. 核心循环采集 ====================
     try:
@@ -227,7 +227,8 @@ async def influx_storage_task():
         
         while True:
             try:
-                await asyncio.sleep(300)
+                # shouldn't be waiting here for 5mins. as it would cause long waiting
+                # await asyncio.sleep(300)
                 influx_data_line = await build_payload_str(app.state.global_plc_cache,'plc_temp_data','temp')
                 if not influx_data_line:
                     continue
@@ -244,9 +245,7 @@ async def influx_storage_task():
             except Exception as e:
                 print('【ERROR：】存储数据发生异常',e)
             #  每隔5 min存储一次
-            # await asyncio.sleep(3000)
-
-    
+            await asyncio.sleep(3000)
     except KeyboardInterrupt:
         print("\n程序已手动停止。")
         # 关闭连接，释放资源
@@ -305,40 +304,6 @@ async def write_single_reg(start_add: int, val:int):
 
 if __name__ == "__main__":
     # parser = argparse.ArgumentParser(description="智慧粮仓系统启动脚本")
-    
-    # # 添加 --env 参数，choices 限制用户只能输入 dev 或 test，default 默认为 dev
-    # parser.add_argument(
-    #     '--env', 
-    #     choices=['dev', 'test'], 
-    #     default='dev', 
-    #     help='指定运行环境: dev (开发环境) 或 test (测试环境)'
-    # )
-    
-    # # 解析命令行输入的参数
-    # args = parser.parse_args()
-    # current_env = args.env
-    # print(f"🚀 系统正在启动，当前指定的运行环境为: 【{current_env.upper()}】")
-
-    # # 2. 📂 根据参数动态加载对应的配置文件
-    # env_file = f".env.{current_env}"
-    
-    # if os.path.exists(env_file):
-    #     # load_dotenv 会把文件里的变量加载到系统的环境变量中
-    #     load_dotenv(dotenv_path=env_file)
-    #     print(f"✅ 成功加载配置文件: {env_file}")
-    # else:
-    #     print(f"❌ 错误: 找不到配置文件 {env_file}，系统退出。")
-    #     sys.exit(1)
-
-    # INFLUX_DB_URL= os.getenv("INFLUX_DB_URL", "127.0.0.1")
-    # print('INFLUX_DB_URL',INFLUX_DB_URL)
-    # PLC_IP= os.getenv("PLC_IP", "127.0.0.1")
-    # PLC_PORT=os.getenv("PLC_PORT")
-    # INFLUX_TOKEN=os.getenv("INFLUX_TOKEN")
-
-    # print("\n--- 📊 当前环境配置变量 ---")
-    # print(f"🔗 后端服务 IP (DB_URL): {INFLUX_DB_URL}")
-    # print(f"🔌 PLC端口号 (PLC_PORT): {PLC_PORT}")
     
 
     # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
