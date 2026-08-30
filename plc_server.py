@@ -52,7 +52,7 @@ async def partial_read(start_address, cnt):
         # print(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
         return result.registers
     else:
-        print("【采集温度数据失败】PLC 内部错误响应")
+        raise Exception("【采集温度数据失败】PLC 内部错误响应")
 
 
 @asynccontextmanager
@@ -67,9 +67,13 @@ async def lifespan(app: FastAPI):
 
     app.state.influx_db_url=os.getenv("INFLUX_DB_URL")
     app.state.influx_token=os.getenv("INFLUX_TOKEN")
+
     app.state.global_plc_cache = []
     app.state.global_display_temp_cache=[]
+
     app.state.global_humid_cache=[]
+    app.state.global_power_cache=[]
+
     app.state.partial_read=partial_read
     app.state.write_single_reg=write_single_reg
 
@@ -182,7 +186,84 @@ async def plc_polling_task():
         await asyncio.sleep(1)
 
 
-async def build_payload_str(data_cache, table, field_prefix):
+async def plc_polling_task():
+    """该任务在后台独立运行，有且仅有它一个人维持与 PLC 的长连接"""
+    # global global_plc_cache, global_display_temp_cache, global_humid_cache
+    while True:
+        if not plc_client.connected:
+            print("【连接断开，等待自动重连】")
+            await asyncio.sleep(3)
+            continue
+        try:
+            await asyncio.gather(
+                poll_and_store_temp(),
+                poll_and_store_humid(),
+                poll_and_store_power()
+            )
+        except Exception as e:
+            print(f"【采集异常】: {e}")
+            
+        # 这里控制采集频率：每 （1秒）高频采集一次
+        await asyncio.sleep(1)
+
+async def poll_and_store_temp():
+    try:
+        app.state.global_plc_cache=await partial_read(35,120)
+        # print(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: {datetime.now()}")
+        # break
+        app.state.global_plc_cache.extend(await partial_read(155,20))
+        app.state.global_display_temp_cache = [round(x / 10, 1) for x in app.state.global_plc_cache]
+
+        await prep_store_data_cache(app.state.global_plc_cache, 'plc_temp_data','temp')
+        print(f'【温度数据存储成功】{datetime.now()}')
+    except Exception as e:
+        print(f'############## poll_and_store_temp 发生异常: {e}')
+
+
+async def poll_and_store_humid():
+    try:
+        # 读取140个湿度数据
+        app.state.global_humid_cache.extend(await partial_read(175,120))
+        app.state.global_humid_cache.extend(await partial_read(195,20))
+        await prep_store_data_cache(app.state.global_humid_cache, 'plc_humid_data','humid')
+        print(f'【湿度数据存储成功】{datetime.now()}')
+    except Exception as e:
+        print(f'############## poll_and_store_temp 发生异常: {e}')
+
+async def poll_and_store_power():
+    try:
+        app.state.global_power_cache.extend(await partial_read(409,1))
+        # await prep_store_data_cache(app.state.global_power_cache, 'plc_power_data','power')
+        print(f'【功率数据存储成功】{datetime.now()}')
+    except Exception as e:
+        print(f'############## poll_and_store_power 发生异常: {e}')
+
+async def prep_store_data_cache(data_cache, table, field_prefix):
+    try:
+        plc_channels={}
+        for i in range(0,140):
+            plc_channels[f"{field_prefix}{i}"] = data_cache[i]
+            # print(global_plc_cache[i])
+        device_tags = {
+            "plc_type": "s7-smart200",
+            "station_id": "line_01"
+        }
+
+        # 动态生成 140 个字段的行协议数据,如果这步发生异常，就直接catch，不往下走，所以build_influx_line_protocol中
+        # 需要抛出异常
+        influx_data_line = await build_influx_line_protocol(
+            measurement = table, 
+            tags = device_tags, 
+            fields=plc_channels
+        )
+        print(f'拼接后的字符串： {influx_data_line}')
+        await send_to_influx(influx_data_line)
+        
+    except Exception as e:
+        raise Exception(f'##############store_temp_data 发生异常: {e}')
+
+
+async def build_payload_str( table, field_prefix):
     # 内存中不一定会立即有数据，需要判断
     try:
         if not data_cache:
@@ -200,7 +281,7 @@ async def build_payload_str(data_cache, table, field_prefix):
 
         # 动态生成 140 个字段的行协议数据
         influx_data_line = await build_influx_line_protocol(
-            measurement=table, 
+            measurement = table, 
             tags = device_tags, 
             fields=plc_channels
         )
@@ -282,25 +363,6 @@ async def write_single_reg(start_add: int, val:int):
         print("写入异常")
     else:
         print("写入成功，当前寄存器值:", response)        
-
-
-# 4. Web 接口：对外远程管理 ====================
-# 远程查询接口：手机端向 InfluxDB 索要过去 1 小时的历史趋势图表
-# @app.get("/api/history")
-# def get_history_data(range_str: str = "-1h"):
-#     db_client = InfluxDBClient(url="http://localhost:8086", token="YOUR_TOKEN", org="YOUR_ORG")
-#     query_api = db_client.query_api()
-#     # 编写 InfluxDB 的 Flux 查询语句
-#     flux_query = f'''
-#     from(bucket: "your_bucket")
-#       |> range(start: {range_str})
-#       |> filter(fn: (r) => r["_measurement"] == "factory_line_01")
-#       |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-#     '''
-#     result = query_api.query(query=flux_query)
-    
-#     history_list = []
-#     return {"status": "success", "data": history_list}
 
 if __name__ == "__main__":
     # parser = argparse.ArgumentParser(description="智慧粮仓系统启动脚本")
