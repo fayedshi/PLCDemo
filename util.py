@@ -1,6 +1,6 @@
-# print('test')
 import time
 import asyncio
+import struct
 async def build_influx_line_protocol(measurement, tags, fields, timestamp_ns=None):
     """
     动态将字典转换为 InfluxDB 3 标准行协议格式
@@ -19,7 +19,7 @@ async def build_influx_line_protocol(measurement, tags, fields, timestamp_ns=Non
         # 2. 动态拼接 400 个 Fields (例如: temp1=23.5,press2=101.3...)
         field_list = []
         for k, v in fields.items():
-            if(v>50000):# innormal figure to skip
+            if v==63036:# innormal figure to skip
                 print(f"****************************Invalid value found: {v}")
                 print('PLC内部异常，等待2分钟...')
                 await asyncio.sleep(120)
@@ -44,3 +44,19 @@ async def build_influx_line_protocol(measurement, tags, fields, timestamp_ns=Non
         return line
     except Exception as e:
         raise Exception(f'build_influx_line_protocol 发生异常, {e}')
+
+
+    
+def registers_to_val(reg_high, reg_low, flag):
+    """
+    将西门子 PLC 的两个 16 位寄存器转换为 32 位浮点数
+    :param reg_high: 第一个寄存器（地址较小的，高 16 位）
+    :param reg_low: 第二个寄存器（地址较大的，低 16 位）
+    """
+    # 按照大端序格式将两个 16 位无符号整数(H)打包成 4 字节二进制数据
+    raw_bytes = struct.pack(">HH", reg_high, reg_low)
+    
+    # 将这 4 字节数据按照大端序解包为 32 双整形(f)
+    dint_val = struct.unpack(f">{flag}", raw_bytes)[0]
+    
+    return round(dint_val, 4)

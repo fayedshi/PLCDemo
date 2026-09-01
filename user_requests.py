@@ -49,7 +49,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 
-@router.get("/api/tempbytime")
+@router.get("/api/tempreport")
 def show_cords_temp(request: Request, input_time: str):
     print('input_time', input_time)
     influx_client=InfluxDBClient3(host=request.app.state.influx_db_url, token=request.app.state.influx_token, database="my_db")
@@ -61,14 +61,18 @@ def show_cords_temp(request: Request, input_time: str):
     # end_time = new_dt_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
     
     temp_cols = [f"temp{i}" for i in range(140)]
+    temp_all_cols = ", ".join(temp_cols)
+
     if not input_time:
         query = f"""
-            SELECT * FROM plc_temp_data order by time desc limit 1
+            SELECT {temp_all_cols},time FROM plc_temp_data 
+            WHERE time >= NOW() - INTERVAL '1 day'
+            order by time desc limit 1
             """
     else:
         start_time=to_utctime(input_time)
         query = f"""
-            SELECT * 
+            SELECT {temp_all_cols}, time 
             FROM plc_temp_data 
             WHERE time >= '{start_time}' 
             order by time asc
@@ -160,6 +164,66 @@ def get_history_data(request: Request,start_time: str,end_time: str):
     finally:
         influx_client.close()
 
+
+# 显示平均功率，平均功耗
+@router.get("/api/power-trend")
+def get_power_history(request: Request,start_time: str,end_time: str, interval: str):
+    print(f"'start_time',{start_time},interval: {interval}")
+    influx_client=InfluxDBClient3(host=request.app.state.influx_db_url, token=request.app.state.influx_token, database="my_db")
+    # 1. 动态生成 140 个列名的列表：['temp0', 'temp1', ..., 'temp139']
+    # temp_cols = [f"temp{i}" for i in range(140)]
+    # avg_temp_sum = " + ".join(temp_cols)
+    # humid_cols = [f"humid{i}" for i in range(140)]
+    # avg_humid_sum = " + ".join(humid_cols)
+
+    start = to_utctime(start_time)
+    end = to_utctime(end_time)
+# -- 1. InfluxDB v3 核心函数：将时间戳按 1 小时(INTERVAL '1 HOUR')对齐，作为前端 X 轴时间
+    query = f"""
+        SELECT 
+            DATE_BIN(INTERVAL '1 hour', time) AS chart_time, 
+            MAX(power4) - LAG(MAX(power4), 1) OVER (ORDER BY DATE_BIN(INTERVAL '1 hour', time)) AS engery_consumption 
+        FROM plc_power_data
+        where 
+            time between '{start}' AND '{end}'
+        GROUP BY DATE_BIN(INTERVAL '1 hour', time)
+        order by chart_time ASC
+        """
+
+    # 3. 执行查询并转换数据
+    try:
+        # language="sql" 显式指定使用 SQL引擎
+        # print('to exectue',query)
+        table = influx_client.query(query=query, language="sql")
+
+        # 4. 将 PyArrow Table 转换为 Pandas DataFrame
+        if table.num_rows == 0:
+            return pd.DataFrame()
+        # 将 PyArrow Table 转换为 Pandas DataFrame 以便后续分析
+        df = table.to_pandas()
+        print('found data\n',df)
+        # print(f"查询到 {len(df)} 条数据")
+        df['time'] = pd.to_datetime(df['chart_time']) + timedelta(hours=8)
+        if interval.endswith('day'):
+            df['time'] = df['time'].dt.strftime('%Y-%m-%d')
+        else:
+            df['time'] = df['time'].dt.strftime('%Y-%m')
+        # final_df = df[['time', 'avg_temp', 'avg_humid']]
+        # 某个时间点可能没有数据，需要将NaN转为None ,前端js可以识别null
+
+        df = df.replace({np.nan: None})
+        # print('final df', final_df)
+
+        # 6. 一键转为 Python 列表字典结构 (对应 JSON 中的 [{...}, {...}])
+        # orient='records' 是关键，它会自动处理 Pandas 中的 NaN 值为 Python 的 None (即 JSON 的 null)
+        json_structure = df.to_dict(orient='records')
+        # print('json_structure',json_structure)
+        # print('df.head: ',df.head())
+        return json_structure
+    except Exception as e:
+        print(f"查询失败: {e}")
+    finally:
+        influx_client.close()
 
 
 # 控制接口

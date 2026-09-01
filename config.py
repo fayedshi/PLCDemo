@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     # Pydantic 会自动读取名为 DATABASE_URL 的环境变量
     # 默认值是一个本地的 MySQL 数据库地址
     DATABASE_URL: str = "mysql+aiomysql://root:123456@localhost:3306/test"
+    DB_HOST: str
+    DB_PORT: str
+    DB_USER: str
+    DB_PASSWORD: str
+    DB_NAME: str
 
     model_config={
         "env_file": env_filename, # 支持从项目根目录的 .env 文件加载
