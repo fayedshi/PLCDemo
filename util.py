@@ -58,5 +58,4 @@ def registers_to_val(reg_high, reg_low, flag):
     
     # 将这 4 字节数据按照大端序解包为 32 双整形(f)
     dint_val = struct.unpack(f">{flag}", raw_bytes)[0]
-    
-    return round(dint_val, 4)
+    return dint_val

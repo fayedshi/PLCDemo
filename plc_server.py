@@ -30,7 +30,7 @@ from gran_router import router as gran_router
 plc_client = None
 
 DATABASE_NAME='my_db'
-STORAGE_INTERVAL=300
+STORAGE_INTERVAL=30
 
 # 1. 解析参数并加载环境（必须在最外层）
 parser = argparse.ArgumentParser()
@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
     app.state.store_interval = 1
 
     app.state.global_plc_cache = []
-    app.state.global_display_temp_cache=[]
+    app.state.global_display_temp_cache = []
 
     app.state.global_humid_cache=[]
     app.state.global_power_cache=[]
@@ -186,26 +186,30 @@ async def plc_polling_task():
                 poll_and_store_humid(),
                 poll_and_store_power()
             )
+            
+        except Exception as e:
+            print(f"【采集异常】: {e}, {datetime.now()}")
+        finally:
             if app.state.store_interval==STORAGE_INTERVAL:
                 app.state.store_interval=1
-        except Exception as e:
-            print(f"【采集异常】: {e}")
-            
-        # 这里控制采集频率：每 （1秒）高频采集一次
+        # 每1秒采集一次
         await asyncio.sleep(1)
 
 async def poll_and_store_temp():
     try:
-        app.state.global_plc_cache=await partial_read(35,120)
+        temp_data=await partial_read(35,120)
         # print(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: {datetime.now()}")
         # break
-        app.state.global_plc_cache.extend(await partial_read(155,20))
-        app.state.global_display_temp_cache = [round(x / 10, 1) for x in app.state.global_plc_cache]
+        temp_data.extend(await partial_read(155,20))
+        app.state.global_plc_cache = temp_data
+        temp_data = [round(x / 10, 1) for x in temp_data]
+        app.state.global_display_temp_cache=temp_data
+        
         if app.state.store_interval==STORAGE_INTERVAL:
             await prep_store_data_cache(app.state.global_plc_cache, 'plc_temp_data','temp')
             print(f'【温度数据存储成功】{datetime.now()}')
     except Exception as e:
-        print(f'############## poll_and_store_temp 发生异常: {e}')
+        print(f'############## poll_and_store_temp 发生异常: {e}, {datetime.now()}')
 
 
 async def poll_and_store_humid():
@@ -217,7 +221,7 @@ async def poll_and_store_humid():
             await prep_store_data_cache(app.state.global_humid_cache, 'plc_humid_data','humid')
             print(f'【湿度数据存储成功】{datetime.now()}')
     except Exception as e:
-        print(f'############## poll_and_store_temp 发生异常: {e}')
+        print(f'############## poll_and_store_humid 发生异常: {e}, {datetime.now()}')
 
 async def poll_and_store_power():
     try:
@@ -226,15 +230,17 @@ async def poll_and_store_power():
         # 每次跳 2 步
         for i in range(0, len(raw_regs), 2):
             # pair = data[i:i+2]
-            # print(f'power data {raw_regs[i]},{raw_regs[i+1]}')
+            
             if i==len(raw_regs)-2:
-                consumEnerg=round(registers_to_val(raw_regs[i],raw_regs[1+1],'I')/1000,1)
+                # print(f'power data regs: {raw_regs[i]},{raw_regs[i+1]}')
+                consumEnerg=round(registers_to_val(raw_regs[i],raw_regs[i+1],'I')/1000,2)
                 data.append(consumEnerg)
             else:
                 data.append(registers_to_val(raw_regs[i],raw_regs[1+1],'f'))
-        # print('done power read ',data)
+        
         app.state.global_power_cache = data
-        if app.state.store_interval==STORAGE_INTERVAL:
+        if app.state.store_interval == STORAGE_INTERVAL:
+            print('done power read ',data)
             await prep_store_data_cache(app.state.global_power_cache, 'plc_power_data','power')
             print(f'【功率数据存储成功】{datetime.now()}')
     except Exception as e:
@@ -354,7 +360,7 @@ async def send_to_influx(payload_text: str):
             if response.status_code == 204:
                 print(f"[成功] 成功异步写入数据块，大小: {len(payload_text.splitlines())} 行，时间: {datetime.now()}")
             else:
-                print(f"[错误] 写入失败，状态码: {response.status_code}, 原因: {response.text} {datetime.now()}")
+                raise Exception(f"[错误] 写入失败，状态码: {response.status_code}, 原因: {response.text} {datetime.now()}")
         except Exception as e:
             raise Exception(f"[异常] 异步发送过程中发生错误，{datetime.now()}: {e} ")
 

@@ -23,6 +23,9 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             # plc_data = global_display_temp_cache
             # print('in live ',global_plc_cache)
+            if not websocket.app.state.global_plc_cache:
+                await asyncio.sleep(2)
+                continue
             avg_temp=round(statistics.mean(websocket.app.state.global_display_temp_cache),1)
             avg_humid=round(statistics.mean(websocket.app.state.global_humid_cache)/10,1)
             await websocket.send_json([avg_temp,avg_humid])
@@ -170,23 +173,20 @@ def get_history_data(request: Request,start_time: str,end_time: str):
 def get_power_history(request: Request,start_time: str,end_time: str, interval: str):
     print(f"'start_time',{start_time},interval: {interval}")
     influx_client=InfluxDBClient3(host=request.app.state.influx_db_url, token=request.app.state.influx_token, database="my_db")
-    # 1. 动态生成 140 个列名的列表：['temp0', 'temp1', ..., 'temp139']
-    # temp_cols = [f"temp{i}" for i in range(140)]
-    # avg_temp_sum = " + ".join(temp_cols)
-    # humid_cols = [f"humid{i}" for i in range(140)]
-    # avg_humid_sum = " + ".join(humid_cols)
 
     start = to_utctime(start_time)
     end = to_utctime(end_time)
+    # interval='5 minutes'
 # -- 1. InfluxDB v3 核心函数：将时间戳按 1 小时(INTERVAL '1 HOUR')对齐，作为前端 X 轴时间
     query = f"""
         SELECT 
-            DATE_BIN(INTERVAL '1 hour', time) AS chart_time, 
-            MAX(power4) - LAG(MAX(power4), 1) OVER (ORDER BY DATE_BIN(INTERVAL '1 hour', time)) AS engery_consumption 
+            DATE_BIN(INTERVAL {interval}, time) AS chart_time, 
+            ROUND(avg(power3),2) as avg_power,
+            ROUND(MAX(power4) - LAG(MAX(power4), 1) OVER (ORDER BY DATE_BIN(INTERVAL {interval}, time)),2) AS engery_consumption 
         FROM plc_power_data
         where 
             time between '{start}' AND '{end}'
-        GROUP BY DATE_BIN(INTERVAL '1 hour', time)
+        GROUP BY DATE_BIN(INTERVAL {interval}, time)
         order by chart_time ASC
         """
 
@@ -206,7 +206,7 @@ def get_power_history(request: Request,start_time: str,end_time: str, interval: 
         df['time'] = pd.to_datetime(df['chart_time']) + timedelta(hours=8)
         if interval.endswith('day'):
             df['time'] = df['time'].dt.strftime('%Y-%m-%d')
-        else:
+        elif interval.endswith('month'):
             df['time'] = df['time'].dt.strftime('%Y-%m')
         # final_df = df[['time', 'avg_temp', 'avg_humid']]
         # 某个时间点可能没有数据，需要将NaN转为None ,前端js可以识别null
