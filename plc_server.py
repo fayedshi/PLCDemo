@@ -30,7 +30,7 @@ from gran_router import router as gran_router
 plc_client = None
 
 DATABASE_NAME='my_db'
-STORAGE_INTERVAL=30
+STORAGE_INTERVAL=300
 
 # 1. 解析参数并加载环境（必须在最外层）
 parser = argparse.ArgumentParser()
@@ -195,12 +195,25 @@ async def plc_polling_task():
         # 每1秒采集一次
         await asyncio.sleep(1)
 
+def check_cache_val(data_cache):
+    for v in data_cache:
+        if v >= 50000:
+            print(f"***************** Invalid value found: {v},时间: {datetime.now()}")
+            return False
+    return True
+
 async def poll_and_store_temp():
     try:
         temp_data=await partial_read(35,120)
         # print(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: {datetime.now()}")
         # break
         temp_data.extend(await partial_read(155,20))
+        # 临时加入，检查异常值，可能不需要
+        if not check_cache_val(temp_data):
+            print(f"*****************PLC内部异常 in poll_and_store_temp: ，等待2分钟")
+            await asyncio.sleep(120)
+            return
+        
         app.state.global_plc_cache = temp_data
         temp_data = [round(x / 10, 1) for x in temp_data]
         app.state.global_display_temp_cache=temp_data
@@ -215,8 +228,13 @@ async def poll_and_store_temp():
 async def poll_and_store_humid():
     try:
         # 读取140个湿度数据
-        app.state.global_humid_cache=await partial_read(175,120)
-        app.state.global_humid_cache.extend(await partial_read(195,20))
+        humid_cache=await partial_read(175,120)
+        humid_cache.extend(await partial_read(195,20))
+        if not check_cache_val(humid_cache):
+            print(f"*****************PLC内部异常 in poll_and_store_humid: ，等待2分钟")
+            await asyncio.sleep(120)
+            return
+        app.state.global_humid_cache=humid_cache
         if app.state.store_interval==STORAGE_INTERVAL:
             await prep_store_data_cache(app.state.global_humid_cache, 'plc_humid_data','humid')
             print(f'【湿度数据存储成功】{datetime.now()}')
@@ -233,10 +251,10 @@ async def poll_and_store_power():
             
             if i==len(raw_regs)-2:
                 # print(f'power data regs: {raw_regs[i]},{raw_regs[i+1]}')
-                consumEnerg=round(registers_to_val(raw_regs[i],raw_regs[i+1],'I')/1000,2)
+                consumEnerg=round(registers_to_val(raw_regs[i],raw_regs[i+1],'I')/1000,1)
                 data.append(consumEnerg)
             else:
-                data.append(registers_to_val(raw_regs[i],raw_regs[1+1],'f'))
+                data.append(round(registers_to_val(raw_regs[i],raw_regs[1+1],'f'),1))
         
         app.state.global_power_cache = data
         if app.state.store_interval == STORAGE_INTERVAL:

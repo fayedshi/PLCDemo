@@ -9,6 +9,8 @@ class GranaryBase(BaseModel):
     keeper: str = Field(..., example="张利国")
     grain_type: str = Field(..., example="小麦")
     max_temp: float = Field(..., example=22.0)
+    plc_code: str = Field(..., example="001")
+    
 
 # ➕ 用于前端【创建】时传入的模型
 class GranaryCreate(GranaryBase):

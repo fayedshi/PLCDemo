@@ -19,11 +19,11 @@ async def build_influx_line_protocol(measurement, tags, fields, timestamp_ns=Non
         # 2. 动态拼接 400 个 Fields (例如: temp1=23.5,press2=101.3...)
         field_list = []
         for k, v in fields.items():
-            if v==63036:# innormal figure to skip
-                print(f"****************************Invalid value found: {v}")
-                print('PLC内部异常，等待2分钟...')
-                await asyncio.sleep(120)
-                raise Exception('【错误：】PLC读到异常数据')
+            # if v==63036:# innormal figure to skip
+            #     print(f"****************************Invalid value found: {v}")
+            #     print('PLC内部异常，等待2分钟...')
+            #     await asyncio.sleep(120)
+            #     raise Exception('【错误：】PLC读到异常数据')
             if isinstance(v, float):
                 field_list.append(f"{k}={v}")  # 浮点数直接拼接
             elif isinstance(v, int):

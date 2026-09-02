@@ -28,7 +28,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
             avg_temp=round(statistics.mean(websocket.app.state.global_display_temp_cache),1)
             avg_humid=round(statistics.mean(websocket.app.state.global_humid_cache)/10,1)
-            await websocket.send_json([avg_temp,avg_humid])
+            # websocket.app.state.global_power_cache
+            send_buffer=websocket.app.state.global_power_cache[:4]
+            # data=[avg_temp,avg_humid]
+            send_buffer.extend([avg_temp,avg_humid])
+            # print(data)
+            await websocket.send_json(send_buffer)
             # send to vue every 2 sec
             await asyncio.sleep(2)
     except Exception as e:
