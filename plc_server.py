@@ -13,8 +13,8 @@ import httpx
 from util import  build_influx_line_protocol, registers_to_val
 from datetime import datetime
 from database import Base, engine
-from user_requests import router as user_request_router
-from gran_router import router as gran_router
+from routers.user_requests import router as user_request_router
+from routers.gran_router import router as gran_router
 
 # 设置日志级别为 DEBUG，并自定义格式
 # logging.basicConfig(
@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
         print("###采集任务已停止，与PLC的连接已释放完毕")
 
 app = FastAPI(lifespan=lifespan)
-app.include_router(user_request_router, tags=["用户管理"])
+app.include_router(user_request_router, tags=["用户请求管理"])
 app.include_router(gran_router, tags=["仓房管理"])
 
 
