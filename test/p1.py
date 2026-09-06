@@ -11,16 +11,10 @@ async def gen():
 
 
 if __name__ == "__main__":
-    vec=[5,6]
-    vec.extend(asyncio.run(gen()))
-    print(vec)
-    plc_channels = {}
-    for i in range(1, 10):
-        plc_channels[f"sensor_ch{i}"] = 23.45 + (i * 0.1)  # 模拟数据如: 23.55, 23.65...
-
-    print(plc_channels)
-
-    print([3,4]+[5])
+    result=[1]
+    if result:
+        print('data')
+    
 
 
     
