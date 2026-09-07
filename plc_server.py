@@ -12,9 +12,9 @@ from contextlib import asynccontextmanager
 import httpx
 from util import  build_influx_line_protocol, registers_to_val
 from datetime import datetime
-from database import Base, engine
+from database import AsyncSessionLocal, Base, engine
 from routers.user_requests import router as user_request_router
-from routers.gran_router import router as gran_router
+from routers.gran_router import read_granaries, router as gran_router
 
 # 设置日志级别为 DEBUG，并自定义格式
 # logging.basicConfig(
@@ -38,11 +38,13 @@ parser.add_argument('--env', choices=['dev', 'test'], default='dev')
 args, _ = parser.parse_known_args()
 load_dotenv(dotenv_path=f".env.{args.env}")
 
+# todo: 写在配置文件里
 # dev_start_address={'win':1,'door':11,'fan':19,'exhaust':27,'ac':33}
 
 plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
-
+active_alarms = {}
+TEMP_UPPER_LIMIT=None
 
 # 最多读取120个寄存器
 async def partial_read(start_address, cnt):
@@ -57,14 +59,10 @@ async def partial_read(start_address, cnt):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        # 如果表不存在，则自动创建（生产环境建议使用 Alembic 迁移）
-        await conn.run_sync(Base.metadata.create_all)
-
-    print("connected to mysql")
+    
     app.state.plc_ip= os.getenv("PLC_IP", "127.0.0.1")
     app.state.plc_port=os.getenv("PLC_PORT")
-
+    print(f'读取plc IP: {app.state.plc_ip}, 端口{app.state.plc_port}')
     app.state.influx_db_url=os.getenv("INFLUX_DB_URL")
     app.state.influx_token=os.getenv("INFLUX_TOKEN")
 
@@ -78,12 +76,17 @@ async def lifespan(app: FastAPI):
 
     app.state.partial_read=partial_read
     app.state.write_single_reg=write_single_reg
+    async with engine.begin() as conn:
+        # 如果表不存在，则自动创建（生产环境建议使用 Alembic 迁移）
+        await conn.run_sync(Base.metadata.create_all)
 
+    print("connected to mysql")
     print("\n--- 📊 当前环境配置变量 ---")
-    print(f"🔗 后端服务 IP (DB_URL): {app.state.influx_db_url}")
+    print(f"后端服务 (influx_DB_URL): {app.state.influx_db_url}")
 
     # 全局初始化一次异步客户端
     global plc_client
+    global TEMP_UPPER_LIMIT
     try:
         
         plc_client = AsyncModbusTcpClient(app.state.plc_ip, port=app.state.plc_port, 
@@ -93,7 +96,12 @@ async def lifespan(app: FastAPI):
         print("【系统启动】正在尝试与 PLC 建立唯一的长连接...")
         await plc_client.connect()
         print("【lifespan】物理通道已建立")
-
+        granaries= await read_granary_conf()
+        if granaries:
+            TEMP_UPPER_LIMIT=granaries[0].max_temp
+            print(f' temp upper limit {TEMP_UPPER_LIMIT}')
+        else:
+            raise Exception('【ERROR：无法读取仓房温度上限】')
         polling_job=asyncio.create_task(plc_polling_task())
         yield
 
@@ -122,7 +130,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+async def read_granary_conf():
+    async with AsyncSessionLocal() as session:
+        granaries = await read_granaries(
+            code = "001", 
+            name=None,
+            grain_type=None, 
+            keeper=None, 
+            db = session
+        )
+        print(f"【系统启动】读取到粮仓数据共 {len(granaries)} 条")
+        return granaries
 
+    
 async def plc_polling_task():
     """该任务在后台独立运行，有且仅有它一个人维持与 PLC 的长连接"""
     # global global_plc_cache, global_display_temp_cache, global_humid_cache
@@ -130,6 +150,8 @@ async def plc_polling_task():
         if not plc_client.connected:
             print("【连接断开，等待自动重连】")
             await asyncio.sleep(3)
+            # 断开三次以上才记录alarm
+            check_alarms('disconnect',None)
             continue
         try:
             app.state.store_interval += 1
@@ -137,6 +159,7 @@ async def plc_polling_task():
                 poll_and_store_temp(),
                 poll_and_store_humid(),
                 poll_and_store_power()
+                
             )
             
         except Exception as e:
@@ -147,12 +170,44 @@ async def plc_polling_task():
         # 每1秒采集一次
         await asyncio.sleep(1)
 
+
 def check_cache_val(data_cache):
     for v in data_cache:
         if v >= 50000:
             print(f"***************** Invalid value found: {v},时间: {datetime.now()}")
             return False
+        
     return True
+
+async def check_alarms(event_type, data_cache):
+    max_score = max(data_cache)
+    house_code='001'
+    if max_score >= TEMP_UPPER_LIMIT:
+        # alarm_data = {
+        #     "event": "ALARM_TRIGGER",
+        #     "house_id": house_id,
+        #     "house_name": house_name,
+        #     "type": "PLC_DISCONNECT",
+        #     "message": f"❌ 通信故障：{house_name} PLC 连接断开！",
+        #     "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # }
+        temp_key = f"{house_code}_TEMP_HIGH"
+        # if not active_alarms[temp_key]:
+        alarm_data = {
+            "event": "ALARM_TRIGGER",
+            "house_code": house_code,
+            # "house_name": house_name,
+            "type": "TEMP_HIGH",
+            "message": f"🔥 温度超限：{house_code} 当前温度 {max_score}℃ 超过设定的 {TEMP_UPPER_LIMIT}℃！",
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        active_alarms[temp_key]=alarm_data
+         #todo: await save_to_history_db(alarm_data)
+    else:
+        del active_alarms[temp_key]
+        # 要加recover notification吗
+        
+
 
 async def poll_and_store_temp():
     try:
@@ -165,7 +220,8 @@ async def poll_and_store_temp():
             print(f"*****************PLC内部异常 in poll_and_store_temp: ，等待2分钟")
             await asyncio.sleep(120)
             return
-        
+
+        await check_alarms('TEMP_HIGH',temp_data)
         app.state.global_plc_cache = temp_data
         temp_data = [round(x / 10, 1) for x in temp_data]
         app.state.global_display_temp_cache=temp_data

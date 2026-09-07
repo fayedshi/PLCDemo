@@ -59,11 +59,12 @@ router = APIRouter(tags=["仓房管理模块"])
 @router.get("/api/granary", response_model=List[schemas.GranaryOut])
 async def read_granaries(
     name: Optional[str] = Query(None, description="模糊搜索名称或编号"),
+    code: Optional[str] = Query(None),
     grain_type: Optional[str] = Query(None, description="精确品种筛选"),
     keeper: Optional[str] = Query(None, description="模糊搜索保管员"),
     db: AsyncSession = Depends(get_db)
     ):
-    print("##########in search granary")
+    print("##########in search granary,",grain_type, 'name :',name)
     stmt = select(models.Granary)
     
     # 🔍 动态拼接前端传来的查询条件
@@ -72,11 +73,16 @@ async def read_granaries(
             models.Granary.name.like(f"%{name}%") | 
             models.Granary.code.like(f"%{name}%")
         )
+    if code:
+        stmt = stmt.where(
+            models.Granary.code==code
+        )
+
     if grain_type:
         stmt = stmt.where(models.Granary.grain_type == grain_type)
     if keeper:
         stmt = stmt.where(models.Granary.keeper.like(f"%{keeper}%"))
-        
+    print(f'stmt {stmt}')
     result = await db.execute(stmt)
     return result.scalars().all()
 
