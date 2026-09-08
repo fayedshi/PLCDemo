@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Query
+from fastapi import APIRouter, HTTPException, Depends, Request, status, Query
 from database import engine, Base
 from sqlalchemy import select, update, delete
 from typing import List, Optional
@@ -105,7 +105,7 @@ async def create_granary(obj_in: schemas.GranaryCreate, db: AsyncSession = Depen
 
 # 🎯 接口 3：【改】- 依据 ID 修改廒间信息
 @router.put("/api/granary/{item_id}", response_model=schemas.GranaryOut)
-async def update_granary(item_id: int, obj_in: schemas.GranaryUpdate, db: AsyncSession = Depends(get_db)):
+async def update_granary(request: Request, item_id: int, obj_in: schemas.GranaryUpdate, db: AsyncSession = Depends(get_db)):
     # 查询是否存在
     print('查询仓房信息')
     stmt = select(models.Granary).where(models.Granary.id == item_id)
@@ -121,6 +121,10 @@ async def update_granary(item_id: int, obj_in: schemas.GranaryUpdate, db: AsyncS
     )
     await db.commit()
     await db.refresh(db_item)
+
+    # 同时更新内存中temp threshold
+    request.app.state.TEMP_UPPER_LIMIT = obj_in.max_temp
+    print(f'【已更新仓房{obj_in.code}温度上限值】为{obj_in.max_temp}')
     return db_item
 
 

@@ -46,19 +46,19 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     # connected_clients.add(websocket)
     try:
-        # 握手成功后，立刻把当前“正在发生”的报警推给前端，防止前端刷新页面后看板变空
-        await websocket.send_json({
-            "event": "INIT_ACTIVE_ALARMS",
-            "data": list(websocket.app.state.active_alarms)
-        })
         while True:
-            await websocket.receive_text() # 维持心跳
+            # await websocket.receive_text() # 维持心跳
+            # print(f'alarms: {websocket.app.state.active_alarms}')
+        # 握手成功后，立刻把当前“正在发生”的报警推给前端，防止前端刷新页面后看板变空
+            await websocket.send_json(
+                websocket.app.state.active_alarms
+            )
+            await asyncio.sleep(10)
     except Exception as e:
         print(f"客户端/ws/alarms断开连接: {e}")
-        
+
     # except WebSocketDisconnect:
         # connected_clients.remove(websocket)
-
 
 
 @router.websocket("/ws/dev-state")

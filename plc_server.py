@@ -32,10 +32,19 @@ plc_client = None
 DATABASE_NAME='my_db'
 STORAGE_INTERVAL=300
 
+# HOUSE_CODE=None
+
 # 1. 解析参数并加载环境（必须在最外层）
 parser = argparse.ArgumentParser()
 parser.add_argument('--env', choices=['dev', 'test'], default='dev')
+parser.add_argument('--house-code', help="粮仓代码 (必填)")
 args, _ = parser.parse_known_args()
+if not args.house_code:
+    # 使用 parser.error 会打印错误信息、显示帮助文档并自动执行 sys.exit(2) 退出
+    parser.error("缺少必填参数: --house-code")
+
+HOUSE_CODE = args.house_code
+
 load_dotenv(dotenv_path=f".env.{args.env}")
 
 # todo: 写在配置文件里
@@ -43,8 +52,9 @@ load_dotenv(dotenv_path=f".env.{args.env}")
 
 plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
-active_alarms = {}
-TEMP_UPPER_LIMIT=None
+
+# active_alarms = {}
+# app.state.TEMP_UPPER_LIMIT=None
 
 # 最多读取120个寄存器
 async def partial_read(start_address, cnt):
@@ -74,6 +84,8 @@ async def lifespan(app: FastAPI):
     app.state.global_humid_cache=[]
     app.state.global_power_cache=[]
 
+    # alarms
+    app.state.active_alarms={}
     app.state.partial_read=partial_read
     app.state.write_single_reg=write_single_reg
     async with engine.begin() as conn:
@@ -86,7 +98,7 @@ async def lifespan(app: FastAPI):
 
     # 全局初始化一次异步客户端
     global plc_client
-    global TEMP_UPPER_LIMIT
+    # global app.state.TEMP_UPPER_LIMIT
     try:
         
         plc_client = AsyncModbusTcpClient(app.state.plc_ip, port=app.state.plc_port, 
@@ -98,8 +110,8 @@ async def lifespan(app: FastAPI):
         print("【lifespan】物理通道已建立")
         granaries= await read_granary_conf()
         if granaries:
-            TEMP_UPPER_LIMIT=granaries[0].max_temp
-            print(f' temp upper limit {TEMP_UPPER_LIMIT}')
+            app.state.TEMP_UPPER_LIMIT=granaries[0].max_temp
+            print(f' temp upper limit {app.state.TEMP_UPPER_LIMIT}')
         else:
             raise Exception('【ERROR：无法读取仓房温度上限】')
         polling_job=asyncio.create_task(plc_polling_task())
@@ -146,14 +158,23 @@ async def read_granary_conf():
 async def plc_polling_task():
     """该任务在后台独立运行，有且仅有它一个人维持与 PLC 的长连接"""
     # global global_plc_cache, global_display_temp_cache, global_humid_cache
+    # HOUSE_CODE='001'
     while True:
         if not plc_client.connected:
             print("【连接断开，等待自动重连】")
             await asyncio.sleep(3)
             # 断开三次以上才记录alarm
-            check_alarms('disconnect',None)
+
+            alarm_data = {
+                "house_code": HOUSE_CODE,
+                "type": "PLC_DISCONNECT",
+                "message": f"❌ 通信故障：{HOUSE_CODE} PLC 连接断开！",
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            gen_alarm('DISCONNECT',alarm_data)
             continue
         try:
+            await remove_alarm(f"{HOUSE_CODE}_DISCONNECT")
             app.state.store_interval += 1
             await asyncio.gather(
                 poll_and_store_temp(),
@@ -179,34 +200,35 @@ def check_cache_val(data_cache):
         
     return True
 
-async def check_alarms(event_type, data_cache):
-    max_score = max(data_cache)
-    house_code='001'
-    if max_score >= TEMP_UPPER_LIMIT:
-        # alarm_data = {
-        #     "event": "ALARM_TRIGGER",
-        #     "house_id": house_id,
-        #     "house_name": house_name,
-        #     "type": "PLC_DISCONNECT",
-        #     "message": f"❌ 通信故障：{house_name} PLC 连接断开！",
-        #     "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # }
-        temp_key = f"{house_code}_TEMP_HIGH"
-        # if not active_alarms[temp_key]:
+async def check_temp(event_type, data_cache):
+    max_score = round(max(data_cache)/10,1)
+    # HOUSE_CODE='001'
+    temp_key = f"{HOUSE_CODE}_{event_type}"
+    
+    # print('max_score:',max_score)
+    if max_score >= app.state.TEMP_UPPER_LIMIT:
         alarm_data = {
-            "event": "ALARM_TRIGGER",
-            "house_code": house_code,
-            # "house_name": house_name,
-            "type": "TEMP_HIGH",
-            "message": f"🔥 温度超限：{house_code} 当前温度 {max_score}℃ 超过设定的 {TEMP_UPPER_LIMIT}℃！",
+            # "event": "ALARM_TRIGGER",
+            "type": event_type,
+            "house_code": HOUSE_CODE,
+            "message": f"🔥 温度超限：{HOUSE_CODE} 当前温度 {max_score}℃ 超过设定的 {app.state.TEMP_UPPER_LIMIT}℃！",
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        active_alarms[temp_key]=alarm_data
+        # app.state.active_alarms[temp_key]= alarm_data
          #todo: await save_to_history_db(alarm_data)
+        await gen_alarm(temp_key,alarm_data)
     else:
-        del active_alarms[temp_key]
-        # 要加recover notification吗
-        
+        # 如果存在就自动删除；如果不存在，什么都不会发生，代码继续往下走
+        # app.state.active_alarms.pop(temp_key, None)
+        await remove_alarm(temp_key)
+
+async def gen_alarm(alarm_key,alarm_data):
+    app.state.active_alarms[alarm_key]= alarm_data
+ 
+
+async def remove_alarm(alarm_key):
+    app.state.active_alarms.pop(alarm_key, None)
+
 
 
 async def poll_and_store_temp():
@@ -216,12 +238,13 @@ async def poll_and_store_temp():
         # break
         temp_data.extend(await partial_read(155,20))
         # 临时加入，检查异常值，可能不需要
-        if not check_cache_val(temp_data):
+        res =  check_cache_val(temp_data)
+        if not res:
             print(f"*****************PLC内部异常 in poll_and_store_temp: ，等待2分钟")
             await asyncio.sleep(120)
             return
 
-        await check_alarms('TEMP_HIGH',temp_data)
+        await check_temp('TEMP_HIGH', temp_data)
         app.state.global_plc_cache = temp_data
         temp_data = [round(x / 10, 1) for x in temp_data]
         app.state.global_display_temp_cache=temp_data
