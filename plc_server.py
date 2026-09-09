@@ -174,7 +174,7 @@ async def plc_polling_task():
             gen_alarm('DISCONNECT',alarm_data)
             continue
         try:
-            await remove_alarm(f"{HOUSE_CODE}_DISCONNECT")
+            await remove_alarm(f"{HOUSE_CODE}__PLC_DISCONNECT")
             app.state.store_interval += 1
             await asyncio.gather(
                 poll_and_store_temp(),
@@ -201,26 +201,28 @@ def check_cache_val(data_cache):
     return True
 
 async def check_temp(event_type, data_cache):
-    max_score = round(max(data_cache)/10,1)
+    curr_max_temp = round(max(data_cache)/10,1)
     # HOUSE_CODE='001'
     temp_key = f"{HOUSE_CODE}_{event_type}"
     
-    # print('max_score:',max_score)
-    if max_score >= app.state.TEMP_UPPER_LIMIT:
+    # print('current max temperature: ',curr_max_temp,' limit ',app.state.TEMP_UPPER_LIMIT)
+    if curr_max_temp >= app.state.TEMP_UPPER_LIMIT:
         alarm_data = {
             # "event": "ALARM_TRIGGER",
             "type": event_type,
             "house_code": HOUSE_CODE,
-            "message": f"🔥 温度超限：{HOUSE_CODE} 当前温度 {max_score}℃ 超过设定的 {app.state.TEMP_UPPER_LIMIT}℃！",
+            "message": f"🔥 温度超限：{HOUSE_CODE} 当前温度 {curr_max_temp}℃ 超过设定的 {app.state.TEMP_UPPER_LIMIT}℃！",
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         # app.state.active_alarms[temp_key]= alarm_data
          #todo: await save_to_history_db(alarm_data)
-        await gen_alarm(temp_key,alarm_data)
-    else:
-        # 如果存在就自动删除；如果不存在，什么都不会发生，代码继续往下走
-        # app.state.active_alarms.pop(temp_key, None)
-        await remove_alarm(temp_key)
+        #  已经存在的话，就不去更新，保留第一条alarm
+        if not app.state.active_alarms[temp_key]:
+            await gen_alarm(temp_key,alarm_data)
+    elif app.state.TEMP_UPPER_LIMIT - curr_max_temp >=0.5:
+        # 当前温度小于阈值 0.5°的回查以上才消除警报
+        await gen_alarm(temp_key,{})
+        # await remove_alarm(temp_key)
 
 async def gen_alarm(alarm_key,alarm_data):
     app.state.active_alarms[alarm_key]= alarm_data

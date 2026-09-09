@@ -42,14 +42,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # 4. WebSocket 接口：供前端实时连接
 @router.websocket("/ws/alarms")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_alarms_endpoint(websocket: WebSocket):
     await websocket.accept()
+    print(f"客户端/ws/alarms已连接:")
     # connected_clients.add(websocket)
     try:
         while True:
             # await websocket.receive_text() # 维持心跳
             # print(f'alarms: {websocket.app.state.active_alarms}')
-        # 握手成功后，立刻把当前“正在发生”的报警推给前端，防止前端刷新页面后看板变空
+            # 握手成功后，立刻把当前“正在发生”的报警推给前端，防止前端刷新页面后看板变空
             await websocket.send_json(
                 websocket.app.state.active_alarms
             )
@@ -62,7 +63,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @router.websocket("/ws/dev-state")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_dev_state_endpoint(websocket: WebSocket):
     # global dev_state_cache
     await websocket.accept()
     print("【后端提示】发现/ws/dev-state前端客户端已连接！")
