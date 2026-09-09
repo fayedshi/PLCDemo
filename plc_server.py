@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
     app.state.influx_db_url=os.getenv("INFLUX_DB_URL")
     app.state.influx_token=os.getenv("INFLUX_TOKEN")
 
-    app.state.store_interval = 1
+    app.state.num_ticks = 1
 
     app.state.global_plc_cache = []
     app.state.global_display_temp_cache = []
@@ -159,6 +159,7 @@ async def plc_polling_task():
     """该任务在后台独立运行，有且仅有它一个人维持与 PLC 的长连接"""
     # global global_plc_cache, global_display_temp_cache, global_humid_cache
     # HOUSE_CODE='001'
+    alarm_key = f"{HOUSE_CODE}_PLC_DISCONNECT"
     while True:
         if not plc_client.connected:
             print("【连接断开，等待自动重连】")
@@ -171,11 +172,13 @@ async def plc_polling_task():
                 "message": f"❌ 通信故障：{HOUSE_CODE} PLC 连接断开！",
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
-            gen_alarm('DISCONNECT',alarm_data)
+            
+            if not app.state.active_alarms[alarm_key]:
+                gen_alarm('PLC_DISCONNECT',alarm_data)
             continue
         try:
-            await remove_alarm(f"{HOUSE_CODE}__PLC_DISCONNECT")
-            app.state.store_interval += 1
+            await remove_alarm(alarm_key)
+            app.state.num_ticks += 1
             await asyncio.gather(
                 poll_and_store_temp(),
                 poll_and_store_humid(),
@@ -186,8 +189,8 @@ async def plc_polling_task():
         except Exception as e:
             print(f"【采集异常】: {e}, {datetime.now()}")
         finally:
-            if app.state.store_interval==STORAGE_INTERVAL:
-                app.state.store_interval=1
+            if app.state.num_ticks==STORAGE_INTERVAL:
+                app.state.num_ticks = 1
         # 每1秒采集一次
         await asyncio.sleep(1)
 
@@ -229,7 +232,8 @@ async def gen_alarm(alarm_key,alarm_data):
  
 
 async def remove_alarm(alarm_key):
-    app.state.active_alarms.pop(alarm_key, None)
+    # app.state.active_alarms.pop(alarm_key, None)
+    app.state.active_alarms[alarm_key]= {}
 
 
 
@@ -251,7 +255,7 @@ async def poll_and_store_temp():
         temp_data = [round(x / 10, 1) for x in temp_data]
         app.state.global_display_temp_cache=temp_data
         
-        if app.state.store_interval==STORAGE_INTERVAL:
+        if app.state.num_ticks==STORAGE_INTERVAL:
             await prep_store_data_cache(app.state.global_plc_cache, 'plc_temp_data','temp')
             print(f'【温度数据存储成功】{datetime.now()}')
     except Exception as e:
@@ -268,7 +272,7 @@ async def poll_and_store_humid():
             await asyncio.sleep(120)
             return
         app.state.global_humid_cache=humid_cache
-        if app.state.store_interval==STORAGE_INTERVAL:
+        if app.state.num_ticks==STORAGE_INTERVAL:
             await prep_store_data_cache(app.state.global_humid_cache, 'plc_humid_data','humid')
             print(f'【湿度数据存储成功】{datetime.now()}')
     except Exception as e:
@@ -290,7 +294,7 @@ async def poll_and_store_power():
                 data.append(round(registers_to_val(raw_regs[i],raw_regs[1+1],'f'),1))
         
         app.state.global_power_cache = data
-        if app.state.store_interval == STORAGE_INTERVAL:
+        if app.state.num_ticks == STORAGE_INTERVAL:
             print('done power read ',data)
             await prep_store_data_cache(app.state.global_power_cache, 'plc_power_data','power')
             print(f'【功率数据存储成功】{datetime.now()}')
