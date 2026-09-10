@@ -10,6 +10,8 @@ from datetime import datetime
 from pymodbus.client import AsyncModbusTcpClient
 from contextlib import asynccontextmanager
 import httpx
+from models import AlarmLog
+from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, registers_to_val
 from datetime import datetime
 from database import AsyncSessionLocal, Base, engine
@@ -215,14 +217,41 @@ async def check_temp(event_type, data_cache):
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         # app.state.active_alarms[temp_key]= alarm_data
-         #todo: await save_to_history_db(alarm_data)
+         
         #  已经存在的话，就不去更新，保留第一条alarm
         if not app.state.active_alarms[temp_key]:
             await gen_alarm(temp_key,alarm_data)
+            # todo: 
+            await save_to_history_db(alarm_data)
     elif app.state.TEMP_UPPER_LIMIT - curr_max_temp >=0.5:
         # 当前温度小于阈值 0.5°的回查以上才消除警报
         await gen_alarm(temp_key,{})
         # await remove_alarm(temp_key)
+
+async def save_to_history_db(alarm_data: dict):
+    # 1. 使用 Pydantic 进行第一轮严格的数据校验和清洗
+    try:
+        validated_data = AlarmLogCreate(**alarm_data)
+    except Exception as e:
+        print(f"❌ 报警数据格式校验失败: {e}")
+        return
+
+    # 2. 数据库会话上下文管理
+    # db = SessionLocal()
+    async with AsyncSessionLocal() as session:
+        try:
+            # 3. 将校验通过的数据转化为 SQLAlchemy 的模型实例
+            # model_dump() 会把 Pydantic 对象变回 Python 字典（老版本 Pydantic 请用 .dict()）
+            db_alarm = AlarmLog(**validated_data.model_dump())
+            
+            # 4. 执行插入并提交
+            session.add(db_alarm)
+            session.commit()
+            session.refresh(db_alarm)
+            print(f"💾 报警记录已成功持久化到 MySQL，自增 ID: {db_alarm.id}")
+        except Exception as e:
+            session.rollback()  # 发生异常立即回滚
+            print(f"❌ 报警入库失败，已自动回滚: {e}")
 
 async def gen_alarm(alarm_key,alarm_data):
     app.state.active_alarms[alarm_key]= alarm_data

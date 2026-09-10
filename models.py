@@ -1,5 +1,5 @@
-
-from sqlalchemy import Column, Integer, String, Float
+from datetime import datetime
+from sqlalchemy import Column, DateTime, Integer, String, Float
 from database import Base
 
 class Granary(Base):
@@ -13,3 +13,14 @@ class Granary(Base):
     grain_type = Column(String(50), nullable=False, comment="储粮品种")
     max_temp = Column(Float, nullable=False, comment="警报温度上限")
     plc_code = Column(String(30), nullable=False, comment="PLCb编号")
+
+
+
+class AlarmLog(Base):
+    __tablename__ = "alarm_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    type = Column(String(50), nullable=False)
+    house_code = Column(String(50), nullable=False, index=True)
+    message = Column(String(500), nullable=False)
+    time = Column(DateTime, default=datetime.now, nullable=False)
