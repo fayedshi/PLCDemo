@@ -222,7 +222,8 @@ async def check_temp(event_type, data_cache):
         # app.state.active_alarms[temp_key]= alarm_data
          
         #  已经存在的话，就不去更新，保留第一条alarm
-        if not app.state.active_alarms[temp_key]:
+        if temp_key not in app.state.active_alarms or not app.state.active_alarms[temp_key]:
+            print('to generate alarm')
             await gen_alarm(temp_key,alarm_data)
             # todo: 
             await save_to_history_db(alarm_data)
@@ -240,20 +241,20 @@ async def save_to_history_db(alarm_data: dict):
         return
 
     # 2. 数据库会话上下文管理
-    # db = SessionLocal()
     async with AsyncSessionLocal() as session:
         try:
+            print('in AsyncSessionLocal: ',AsyncSessionLocal)
             # 3. 将校验通过的数据转化为 SQLAlchemy 的模型实例
             # model_dump() 会把 Pydantic 对象变回 Python 字典（老版本 Pydantic 请用 .dict()）
             db_alarm = AlarmLog(**validated_data.model_dump())
-            
+            print('db_alarm',db_alarm)
             # 4. 执行插入并提交
             session.add(db_alarm)
-            session.commit()
-            session.refresh(db_alarm)
+            await session.commit()
+            # await session.refresh(db_alarm)
             print(f"💾 报警记录已成功持久化到 MySQL，自增 ID: {db_alarm.id}")
         except Exception as e:
-            session.rollback()  # 发生异常立即回滚
+            await session.rollback()
             print(f"❌ 报警入库失败，已自动回滚: {e}")
 
 async def gen_alarm(alarm_key,alarm_data):
@@ -280,6 +281,7 @@ async def poll_and_store_temp():
             return
 
         await check_temp('TEMP_HIGH', temp_data)
+        # print('after check_temp')
         app.state.global_plc_cache = temp_data
         temp_data = [round(x / 10, 1) for x in temp_data]
         app.state.global_display_temp_cache=temp_data

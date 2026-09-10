@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 
 # 🟢 基础模型（共用属性）
@@ -33,24 +33,35 @@ class GranaryOut(GranaryBase):
 
 
 class AlarmLogBase(BaseModel):
+    # id: int = Field(..., description="", example="TEMP_HIGH")
     type: str = Field(..., description="报警类型", example="TEMP_HIGH")
     house_code: str = Field(..., description="粮仓代码", example="001")
     message: str = Field(..., description="报警消息文本")
+    time: Optional[datetime] = Field(default_factory=datetime.now, description="报警时间")
+
+    class Config:
+    # 💡 必须开启：允许 Pydantic 自动解析 SQLAlchemy 的 ORM 对象
+        from_attributes = True  # 在老版本 Pydantic 中是 orm_mode = True
 
 class AlarmLogCreate(AlarmLogBase):
+    
     """
     专用于插入/创建时的 Schema
     """
     # 💡 兼容处理：允许传入纯文本字符串时间（如 "2026-09-09 17:51:00"）或 datetime 对象
-    time: Optional[datetime] = Field(default_factory=datetime.now, description="报警时间")
+    # time: Optional[datetime] = Field(default_factory=datetime.now, description="报警时间")
+    pass
 
-class AlarmLogResponse(AlarmLogBase):
+class AlarmLogResponse(BaseModel):
     """
     专用于从数据库查询出来、返回给 Vue 前端时的 Schema
     """
-    id: int
-    time: datetime
+    historyTotal: int      # 🎯 前端需要的总条数变量名
+    items: List[AlarmLogBase] # 当前页的报警数组
 
-    class Config:
-        # 💡 必须开启：允许 Pydantic 自动解析 SQLAlchemy 的 ORM 对象
-        from_attributes = True  # 在老版本 Pydantic 中是 orm_mode = True
+
+    
+
+
+
+        
