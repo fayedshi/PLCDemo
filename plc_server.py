@@ -205,6 +205,7 @@ def check_cache_val(data_cache):
         
     return True
 
+# UNACK_ACTIVE(未确未复), ACK_ACTIVE(已确未复), UNACK_CLEAR(未确已复)
 async def check_temp(event_type, data_cache):
     curr_max_temp = round(max(data_cache)/10,1)
     # HOUSE_CODE='001'
@@ -212,25 +213,32 @@ async def check_temp(event_type, data_cache):
     
     # print('current max temperature: ',curr_max_temp,' limit ',app.state.TEMP_UPPER_LIMIT)
     if curr_max_temp >= app.state.TEMP_UPPER_LIMIT:
-        alarm_data = {
-            # "event": "ALARM_TRIGGER",
-            "type": event_type,
-            "house_code": HOUSE_CODE,
-            "message": f"🔥 温度超限：{HOUSE_CODE} 当前温度 {curr_max_temp}℃ 超过设定的 {app.state.TEMP_UPPER_LIMIT}℃！",
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        # app.state.active_alarms[temp_key]= alarm_data
-         
         #  已经存在的话，就不去更新，保留第一条alarm
         if temp_key not in app.state.active_alarms or not app.state.active_alarms[temp_key]:
+            alarm_data = {
+                # "event": "ALARM_TRIGGER",
+                "type": event_type,
+                "house_code": HOUSE_CODE,
+                "message": f"🔥 温度超限：{HOUSE_CODE} 当前温度 {curr_max_temp}℃ 超过设定的 {app.state.TEMP_UPPER_LIMIT}℃！",
+                "trigger_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "clear_time": None,
+                "ack": False,
+                "ack_time": None,
+                "cleared": False
+            }
             print('to generate alarm')
             await gen_alarm(temp_key,alarm_data)
-            # todo: 
-            await save_to_history_db(alarm_data)
+    # 当前温度小于阈值 0.5°的回差以上才消除警报
     elif app.state.TEMP_UPPER_LIMIT - curr_max_temp >=0.5:
-        # 当前温度小于阈值 0.5°的回查以上才消除警报
-        await gen_alarm(temp_key,{})
-        # await remove_alarm(temp_key)
+        alarm_data = app.state.active_alarms[temp_key]
+        alarm_data['cleared'] = True
+        alarm_data['clear_time'] =  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        if alarm_data['ack']:
+            # 将警报置空
+            await gen_alarm(temp_key,{})
+            # 同时已确认和已消除，才进history
+            await save_to_history_db(alarm_data)
+            
 
 async def save_to_history_db(alarm_data: dict):
     # 1. 使用 Pydantic 进行第一轮严格的数据校验和清洗

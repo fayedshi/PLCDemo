@@ -406,3 +406,15 @@ async def control_window(request: Request, data: dict):
     except Exception as e:
             print(f"/api/dev/control 写入PLC异常: {e}")
     return {"success": True}
+
+
+# 报警确认
+@router.post("/api/alarm/ack")
+async def ack_alarm(request: Request, alarm_key: str):
+    try:
+        request.app.state.active_alarms[alarm_key]['ack']=True
+        request.app.state.active_alarms[alarm_key]['ack_time']=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f'更新alarm ack成功')
+        return {"success": True}
+    except Exception as e:
+        print(f"更新/api/alarm/ack异常: {e}")

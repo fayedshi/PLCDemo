@@ -37,7 +37,13 @@ class AlarmLogBase(BaseModel):
     type: str = Field(..., description="报警类型", example="TEMP_HIGH")
     house_code: str = Field(..., description="粮仓代码", example="001")
     message: str = Field(..., description="报警消息文本")
-    time: Optional[datetime] = Field(default_factory=datetime.now, description="报警时间")
+    trigger_time: datetime = Field(default_factory=datetime.now)
+    # 必填，默认未确认，未清除
+    ack: bool = False
+    cleared: bool = False
+    # 可为空，默认为 None
+    ack_time: Optional[datetime] = None
+    clear_time: Optional[datetime] = None
 
     class Config:
     # 💡 必须开启：允许 Pydantic 自动解析 SQLAlchemy 的 ORM 对象
