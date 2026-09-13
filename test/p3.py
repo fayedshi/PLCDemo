@@ -11,14 +11,18 @@ async def gen():
         print(f'i:{i}, nums: {nums}')
 
 async def play():
-    await asyncio.sleep(0.9)
+    # await asyncio.sleep(0.9)
     print('can we get here?')
 
 async def test():
-    task1=asyncio.create_task(gen())
-    task2=asyncio.create_task(play())
-    await task1
-    # await task2
+    # task1=asyncio.create_task(gen())
+    # task2=asyncio.create_task(play())
+    # await task1
+    tasks=[]
+    tasks.append(gen())
+    tasks.append(play())
+
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":
