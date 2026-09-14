@@ -150,7 +150,7 @@ async def get_history_alarms(
             size=size
             # page=page, size=size
         )
-        print('alarms, ', alarms)
+        # print('alarms, ', alarms)
         return {
             "historyTotal": alarms_total,
             "items": alarms
@@ -410,8 +410,10 @@ async def control_window(request: Request, data: dict):
 
 # 报警确认
 @router.post("/api/alarm/ack")
-async def ack_alarm(request: Request, alarm_key: str):
+async def ack_alarm(request: Request, data: dict):
     try:
+        alarm_key=data.get('alarm_key')
+        print(' in ack ',alarm_key)
         request.app.state.active_alarms[alarm_key]['ack']=True
         request.app.state.active_alarms[alarm_key]['ack_time']=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f'更新alarm ack成功')

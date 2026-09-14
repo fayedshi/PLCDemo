@@ -173,6 +173,7 @@ async def plc_polling_task():
             # if not app.state.active_alarms[alarm_key]:
             # gen_alarm(alarm_key, alarm_data)
             await gen_alarm(event_type, HOUSE_CODE, msg)
+            print('after gen_alarm for plc')
             continue
         try:
             await clear_alarm(event_type, HOUSE_CODE)
@@ -203,38 +204,33 @@ def check_cache_val(data_cache):
 # UNACK_ACTIVE(未确未复), ACK_ACTIVE(已确未复), UNACK_CLEAR(未确已复)
 async def check_temp_alarm(event_type, data_cache):
     curr_max_temp = round(max(data_cache)/10,1)
-    # HOUSE_CODE='001'
     # print('current max temperature: ',curr_max_temp,' limit ',app.state.TEMP_UPPER_LIMIT)
     if curr_max_temp >= app.state.TEMP_UPPER_LIMIT:
         #  已经存在的话，就不去更新，保留第一条alarm
         # if temp_key not in app.state.active_alarms or not app.state.active_alarms[temp_key]:
         msg = f"🔥 温度超限：{HOUSE_CODE} 当前温度 {curr_max_temp}℃ 超过设定的 {app.state.TEMP_UPPER_LIMIT}℃！"
-        print('to generate alarm')
+        # print('to generate alarm')
         await gen_alarm(event_type, HOUSE_CODE, msg)
     # 当前温度小于阈值 0.5°的回差以上才消除警报
     elif app.state.TEMP_UPPER_LIMIT - curr_max_temp >=0.5:
-        # alarm_data = app.state.active_alarms[temp_key]
-        # alarm_data['cleared'] = True
-        # alarm_data['clear_time'] =  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        # if alarm_data['ack']:
-        #     # 将警报置空
-        #     await gen_alarm(temp_key,{})
-        #     # 同时已确认和已消除，才进history
-        #     await save_to_history_db(alarm_data)
-        # temp_key = f"{HOUSE_CODE}_{event_type}"
+        # print('going to clear alarm')
         await clear_alarm(event_type, HOUSE_CODE)
             
 async def clear_alarm(event_type, house_code):
     alarm_key = f"{house_code}_{event_type}"
-    alarm_data = app.state.active_alarms[alarm_key]
-    alarm_data['cleared'] = True
-    alarm_data['clear_time'] =  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    if alarm_data['ack']:
-        # 将警报置空
-        # await gen_alarm(alarm_key,{})
-        app.state.active_alarms[alarm_key]= {}
-        # 同时已确认和已消除，才进history
-        await save_to_history_db(alarm_data)
+    # print(f'in clear_alarm(), alarm_key: {alarm_key}')
+    if alarm_key in app.state.active_alarms and app.state.active_alarms[alarm_key]:
+        print('##To clear alarm ',app.state.active_alarms[alarm_key])
+        # 已经存在 {alarm_key: {}}, no more update to the empty alarm
+        alarm_data = app.state.active_alarms[alarm_key]
+        alarm_data['cleared'] = True
+        alarm_data['clear_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if alarm_data['ack']:
+            # 将警报置空
+            app.state.active_alarms[alarm_key]= {}
+            # 同时已确认和已消除，才进history
+            print(f'准备消除alarm，并存入历史报警,{alarm_key}')
+            await save_to_history_db(alarm_data)
 
 def create_alarm_json(event_type, HOUSE_CODE, msg):
     return {
@@ -277,6 +273,7 @@ async def save_to_history_db(alarm_data: dict):
 async def gen_alarm(event_type, house_code, msg):
     alarm_key = f"{house_code}_{event_type}"
     if alarm_key not in app.state.active_alarms or not app.state.active_alarms[alarm_key]:
+        print('======> No existing temp alarm, generating... ')
         alarm_data = create_alarm_json(event_type, house_code, msg)
         app.state.active_alarms[alarm_key]= alarm_data
  
@@ -301,13 +298,15 @@ async def process_temp():
             return
 
         # check alarm and format display data and store temp
-        await asyncio.gather(check_temp_alarm('TEMP_HIGH', temp_data), format_temp_data(), store_temp_data())
+        await asyncio.gather(check_temp_alarm('TEMP_HIGH', temp_data), 
+                             format_temp_data(temp_data), 
+                             store_temp_data(), return_exceptions=True)
         
     except Exception as e:
         print(f'############## poll_and_store_temp 发生异常: {e}, {datetime.now()}')
 
 
-async def format_temp_data():
+async def format_temp_data(temp_data):
     # print('after check_temp')
     app.state.global_plc_cache = temp_data
     temp_data = [round(x / 10, 1) for x in temp_data]

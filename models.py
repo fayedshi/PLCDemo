@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, DateTime, Integer, String, Float
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Float
 from database import Base
 
 class Granary(Base):
@@ -24,7 +24,7 @@ class AlarmLog(Base):
     house_code = Column(String(50), nullable=False, index=True)
     message = Column(String(500), nullable=False)
     trigger_time = Column(DateTime, nullable=False)
-    ack = Column(bool, nullable=False)
+    ack = Column(Boolean, nullable=False)
     ack_time=Column(DateTime, nullable=True)
-    cleared= Column(bool, nullable=False)
+    cleared= Column(Boolean, nullable=False)
     clear_time= Column(DateTime, nullable=True)

@@ -64,7 +64,7 @@ async def read_granaries(
     keeper: Optional[str] = Query(None, description="模糊搜索保管员"),
     db: AsyncSession = Depends(get_db)
     ):
-    print("##########in search granary,",grain_type, 'name :',name)
+    # print("##########in search granary,",grain_type, 'name :',name)
     stmt = select(models.Granary)
     
     # 🔍 动态拼接前端传来的查询条件
@@ -82,7 +82,7 @@ async def read_granaries(
         stmt = stmt.where(models.Granary.grain_type == grain_type)
     if keeper:
         stmt = stmt.where(models.Granary.keeper.like(f"%{keeper}%"))
-    print(f'stmt {stmt}')
+    # print(f'stmt {stmt}')
     result = await db.execute(stmt)
     return result.scalars().all()
 
