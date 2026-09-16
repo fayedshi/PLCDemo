@@ -10,6 +10,7 @@ from datetime import datetime
 from pymodbus.client import AsyncModbusTcpClient
 from contextlib import asynccontextmanager
 import httpx
+from log.plc_logger import get_logger
 from models import AlarmLog
 from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, registers_to_val
@@ -54,6 +55,7 @@ load_dotenv(dotenv_path=f".env.{args.env}")
 
 plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
+logger=get_logger();
 
 # active_alarms = {}
 # app.state.TEMP_UPPER_LIMIT=None
@@ -63,7 +65,7 @@ async def partial_read(start_address, cnt):
     async with plc_lock:
         result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
     if not result.isError():
-        # print(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
+        # logger.info(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
         return result.registers
     else:
         raise Exception("【采集温度数据失败】PLC 内部错误响应")
@@ -74,7 +76,7 @@ async def lifespan(app: FastAPI):
     
     app.state.plc_ip= os.getenv("PLC_IP", "127.0.0.1")
     app.state.plc_port=os.getenv("PLC_PORT")
-    print(f'读取plc IP: {app.state.plc_ip}, 端口{app.state.plc_port}')
+    logger.info(f'读取plc IP: {app.state.plc_ip}, 端口{app.state.plc_port}')
     app.state.influx_db_url=os.getenv("INFLUX_DB_URL")
     app.state.influx_token=os.getenv("INFLUX_TOKEN")
 
@@ -94,9 +96,9 @@ async def lifespan(app: FastAPI):
         # 如果表不存在，则自动创建（生产环境建议使用 Alembic 迁移）
         await conn.run_sync(Base.metadata.create_all)
 
-    print("connected to mysql")
-    print("\n--- 📊 当前环境配置变量 ---")
-    print(f"后端服务 (influx_DB_URL): {app.state.influx_db_url}")
+    logger.info("connected to mysql")
+    logger.info("\n--- 📊 当前环境配置变量 ---")
+    logger.info(f"后端服务 (influx_DB_URL): {app.state.influx_db_url}")
 
     # 全局初始化一次异步客户端
     global plc_client
@@ -107,13 +109,13 @@ async def lifespan(app: FastAPI):
             reconnect_delay=1.0,
             reconnect_delay_max=120 
         )
-        print("【系统启动】正在尝试与 PLC 建立唯一的长连接...")
+        logger.info("【系统启动】正在尝试与 PLC 建立唯一的长连接...")
         await plc_client.connect()
-        print("【lifespan】物理通道已建立")
+        logger.info("【lifespan】物理通道已建立")
         granaries= await read_granary_conf()
         if granaries:
             app.state.TEMP_UPPER_LIMIT=granaries[0].max_temp
-            print(f' temp upper limit {app.state.TEMP_UPPER_LIMIT}')
+            logger.info(f' temp upper limit {app.state.TEMP_UPPER_LIMIT}')
         else:
             raise Exception('【ERROR：无法读取仓房温度上限】')
         polling_job=asyncio.create_task(plc_polling_task())
@@ -121,7 +123,7 @@ async def lifespan(app: FastAPI):
 
     finally:
         # 关闭：断开 PLC 连接
-        print("正在断开 PLC 连接...")
+        logger.info("正在断开 PLC 连接...")
         polling_job.cancel()
 
         try:
@@ -129,7 +131,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:# interupted exception
             pass
         plc_client.close()
-        print("###采集任务已停止，与PLC的连接已释放完毕")
+        logger.info("###采集任务已停止，与PLC的连接已释放完毕")
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(user_request_router, tags=["用户请求管理"])
@@ -153,7 +155,7 @@ async def read_granary_conf():
             keeper=None, 
             db = session
         )
-        print(f"【系统启动】读取到粮仓数据共 {len(granaries)} 条")
+        logger.info(f"【系统启动】读取到粮仓数据共 {len(granaries)} 条")
         return granaries
 
     
@@ -165,7 +167,7 @@ async def plc_polling_task():
     # alarm_key = f"{HOUSE_CODE}_{event_type}"
     while True:
         if not plc_client.connected:
-            print("【连接断开，等待自动重连】")
+            logger.error("【连接断开，等待自动重连】")
             await asyncio.sleep(3)
             # todo: 断开三次以上才记录alarm
             msg=f"❌ 通信故障：{HOUSE_CODE} PLC 连接断开！"
@@ -173,7 +175,7 @@ async def plc_polling_task():
             # if not app.state.active_alarms[alarm_key]:
             # gen_alarm(alarm_key, alarm_data)
             await gen_alarm(event_type, HOUSE_CODE, msg)
-            print('after gen_alarm for plc')
+            logger.info('after gen_alarm for plc')
             continue
         try:
             await clear_alarm(event_type, HOUSE_CODE)
@@ -185,7 +187,7 @@ async def plc_polling_task():
             )
             
         except Exception as e:
-            print(f"【采集异常】: {e}, {datetime.now()}")
+            logger.info(f"【采集异常】: {e}, {datetime.now()}")
         finally:
             if app.state.num_ticks==STORAGE_INTERVAL:
                 app.state.num_ticks = 1
@@ -196,7 +198,7 @@ async def plc_polling_task():
 def check_cache_val(data_cache):
     for v in data_cache:
         if v >= 50000:
-            print(f"***************** Invalid value found: {v},时间: {datetime.now()}")
+            logger.info(f"***************** Invalid value found: {v},时间: {datetime.now()}")
             return False
         
     return True
@@ -204,23 +206,23 @@ def check_cache_val(data_cache):
 # UNACK_ACTIVE(未确未复), ACK_ACTIVE(已确未复), UNACK_CLEAR(未确已复)
 async def check_temp_alarm(event_type, data_cache):
     curr_max_temp = round(max(data_cache)/10,1)
-    # print('current max temperature: ',curr_max_temp,' limit ',app.state.TEMP_UPPER_LIMIT)
+    # logger.info('current max temperature: ',curr_max_temp,' limit ',app.state.TEMP_UPPER_LIMIT)
     if curr_max_temp >= app.state.TEMP_UPPER_LIMIT:
         #  已经存在的话，就不去更新，保留第一条alarm
         # if temp_key not in app.state.active_alarms or not app.state.active_alarms[temp_key]:
         msg = f"🔥 温度超限：{HOUSE_CODE} 当前温度 {curr_max_temp}℃ 超过设定的 {app.state.TEMP_UPPER_LIMIT}℃！"
-        # print('to generate alarm')
+        # logger.info('to generate alarm')
         await gen_alarm(event_type, HOUSE_CODE, msg)
     # 当前温度小于阈值 0.5°的回差以上才消除警报
     elif app.state.TEMP_UPPER_LIMIT - curr_max_temp >=0.5:
-        # print('going to clear alarm')
+        # logger.info('going to clear alarm')
         await clear_alarm(event_type, HOUSE_CODE)
             
 async def clear_alarm(event_type, house_code):
     alarm_key = f"{house_code}_{event_type}"
-    # print(f'in clear_alarm(), alarm_key: {alarm_key}')
+    # logger.info(f'in clear_alarm(), alarm_key: {alarm_key}')
     if alarm_key in app.state.active_alarms and app.state.active_alarms[alarm_key]:
-        print('##To clear alarm ',app.state.active_alarms[alarm_key])
+        logger.info('##To clear alarm ',app.state.active_alarms[alarm_key])
         # 已经存在 {alarm_key: {}}, no more update to the empty alarm
         alarm_data = app.state.active_alarms[alarm_key]
         alarm_data['cleared'] = True
@@ -229,7 +231,7 @@ async def clear_alarm(event_type, house_code):
             # 将警报置空
             app.state.active_alarms[alarm_key]= {}
             # 同时已确认和已消除，才进history
-            print(f'准备消除alarm，并存入历史报警,{alarm_key}')
+            logger.info(f'准备消除alarm，并存入历史报警,{alarm_key}')
             await save_to_history_db(alarm_data)
 
 def create_alarm_json(event_type, HOUSE_CODE, msg):
@@ -250,30 +252,30 @@ async def save_to_history_db(alarm_data: dict):
     try:
         validated_data = AlarmLogCreate(**alarm_data)
     except Exception as e:
-        print(f"❌ 报警数据格式校验失败: {e}")
+        logger.info(f"❌ 报警数据格式校验失败: {e}")
         return
 
     # 2. 数据库会话上下文管理
     async with AsyncSessionLocal() as session:
         try:
-            print('in AsyncSessionLocal: ',AsyncSessionLocal)
+            logger.info('in AsyncSessionLocal: ',AsyncSessionLocal)
             # 3. 将校验通过的数据转化为 SQLAlchemy 的模型实例
             # model_dump() 会把 Pydantic 对象变回 Python 字典（老版本 Pydantic 请用 .dict()）
             db_alarm = AlarmLog(**validated_data.model_dump())
-            print('db_alarm',db_alarm)
+            logger.info('db_alarm',db_alarm)
             # 4. 执行插入并提交
             session.add(db_alarm)
             await session.commit()
             # await session.refresh(db_alarm)
-            print(f"💾 报警记录已成功持久化到 MySQL，自增 ID: {db_alarm.id}")
+            logger.info(f"💾 报警记录已成功持久化到 MySQL，自增 ID: {db_alarm.id}")
         except Exception as e:
             await session.rollback()
-            print(f"❌ 报警入库失败，已自动回滚: {e}")
+            logger.info(f"❌ 报警入库失败，已自动回滚: {e}")
 
 async def gen_alarm(event_type, house_code, msg):
     alarm_key = f"{house_code}_{event_type}"
     if alarm_key not in app.state.active_alarms or not app.state.active_alarms[alarm_key]:
-        print('======> No existing temp alarm, generating... ')
+        logger.info('======> No existing temp alarm, generating... ')
         alarm_data = create_alarm_json(event_type, house_code, msg)
         app.state.active_alarms[alarm_key]= alarm_data
  
@@ -287,13 +289,13 @@ async def gen_alarm(event_type, house_code, msg):
 async def process_temp():
     try:
         temp_data=await partial_read(35,120)
-        # print(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: {datetime.now()}")
+        # logger.info(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: {datetime.now()}")
         # break
         temp_data.extend(await partial_read(155,20))
         # 临时加入，检查异常值，可能不需要
         res =  check_cache_val(temp_data)
         if not res:
-            print(f"*****************PLC内部异常 in poll_and_store_temp: ，等待2分钟")
+            logger.info(f"*****************PLC内部异常 in poll_and_store_temp: ，等待2分钟")
             await asyncio.sleep(120)
             return
 
@@ -303,11 +305,11 @@ async def process_temp():
                              store_temp_data(), return_exceptions=True)
         
     except Exception as e:
-        print(f'############## poll_and_store_temp 发生异常: {e}, {datetime.now()}')
+        logger.info(f'############## poll_and_store_temp 发生异常: {e}, {datetime.now()}')
 
 
 async def format_temp_data(temp_data):
-    # print('after check_temp')
+    # logger.info('after check_temp')
     app.state.global_plc_cache = temp_data
     temp_data = [round(x / 10, 1) for x in temp_data]
     app.state.global_display_temp_cache=temp_data
@@ -315,7 +317,7 @@ async def format_temp_data(temp_data):
 async def store_temp_data():
     if app.state.num_ticks==STORAGE_INTERVAL:
         await prep_store_data_cache(app.state.global_plc_cache, 'plc_temp_data','temp')
-        print(f'【温度数据存储成功】{datetime.now()}')
+        logger.info(f'【温度数据存储成功】{datetime.now()}')
 
 async def process_humid():
     try:
@@ -323,15 +325,15 @@ async def process_humid():
         humid_cache=await partial_read(175,120)
         humid_cache.extend(await partial_read(195,20))
         if not check_cache_val(humid_cache):
-            print(f"*****************PLC内部异常 in poll_and_store_humid: ，等待2分钟")
+            logger.info(f"*****************PLC内部异常 in poll_and_store_humid: ，等待2分钟")
             await asyncio.sleep(120)
             return
         app.state.global_humid_cache=humid_cache
         if app.state.num_ticks==STORAGE_INTERVAL:
             await prep_store_data_cache(app.state.global_humid_cache, 'plc_humid_data','humid')
-            print(f'【湿度数据存储成功】{datetime.now()}')
+            logger.info(f'【湿度数据存储成功】{datetime.now()}')
     except Exception as e:
-        print(f'############## poll_and_store_humid 发生异常: {e}, {datetime.now()}')
+        logger.info(f'############## poll_and_store_humid 发生异常: {e}, {datetime.now()}')
 
 async def process_power():
     try:
@@ -342,7 +344,7 @@ async def process_power():
             # pair = data[i:i+2]
             
             if i==len(raw_regs)-2:
-                # print(f'power data regs: {raw_regs[i]},{raw_regs[i+1]}')
+                # logger.info(f'power data regs: {raw_regs[i]},{raw_regs[i+1]}')
                 consumEnerg=round(registers_to_val(raw_regs[i],raw_regs[i+1],'I')/1000,1)
                 data.append(consumEnerg)
             else:
@@ -350,18 +352,18 @@ async def process_power():
         
         app.state.global_power_cache = data
         if app.state.num_ticks == STORAGE_INTERVAL:
-            print('done power read ',data)
+            logger.info('done power read ',data)
             await prep_store_data_cache(app.state.global_power_cache, 'plc_power_data','power')
-            print(f'【功率数据存储成功】{datetime.now()}')
+            logger.info(f'【功率数据存储成功】{datetime.now()}')
     except Exception as e:
-        print(f'############## poll_and_store_power 发生异常: {e}, {datetime.now()}')
+        logger.info(f'############## poll_and_store_power 发生异常: {e}, {datetime.now()}')
 
 async def prep_store_data_cache(data_cache, table, field_prefix):
     try:
         plc_channels={}
         for i in range(0, len(data_cache)):
             plc_channels[f"{field_prefix}{i}"] = data_cache[i]
-            # print(global_plc_cache[i])
+            # logger.info(global_plc_cache[i])
         device_tags = {
             "plc_type": "s7-smart200",
             "station_id": "line_01"
@@ -374,7 +376,7 @@ async def prep_store_data_cache(data_cache, table, field_prefix):
             tags = device_tags, 
             fields=plc_channels
         )
-        print(f'拼接后的字符串： {influx_data_line}')
+        logger.info(f'拼接后的字符串： {influx_data_line}')
         await send_to_influx(influx_data_line)
         
     except Exception as e:
@@ -399,7 +401,7 @@ async def send_to_influx(payload_text: str):
             
             # InfluxDB 3 写入成功时通常返回 204 No Content
             if response.status_code == 204:
-                print(f"[成功] 成功异步写入数据块，大小: {len(payload_text.splitlines())} 行，时间: {datetime.now()}")
+                logger.info(f"[成功] 成功异步写入数据块，大小: {len(payload_text.splitlines())} 行，时间: {datetime.now()}")
             else:
                 raise Exception(f"[错误] 写入失败，状态码: {response.status_code}, 原因: {response.text} {datetime.now()}")
         except Exception as e:
@@ -409,9 +411,9 @@ async def write_single_reg(start_add: int, val:int):
     async with plc_lock:
         response = await plc_client.write_register(address=start_add, value=val, device_id=1, no_response_expected=False)
     if response.isError():
-        print("写入异常")
+        logger.info("写入异常")
     else:
-        print("写入成功，当前寄存器值:", response)        
+        logger.info("写入成功，当前寄存器值:", response)        
 
 if __name__ == "__main__":
     # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
