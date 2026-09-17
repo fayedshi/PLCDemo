@@ -17,6 +17,7 @@ from util import  build_influx_line_protocol, registers_to_val
 from datetime import datetime
 from database import AsyncSessionLocal, Base, engine
 from routers.user_requests import router as user_request_router
+from routers.venti_router import router as venti_router
 from routers.gran_router import read_granaries, router as gran_router
 
 # 设置日志级别为 DEBUG，并自定义格式
@@ -55,7 +56,7 @@ load_dotenv(dotenv_path=f".env.{args.env}")
 
 plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
-logger=get_logger();
+logger=None;
 
 # active_alarms = {}
 # app.state.TEMP_UPPER_LIMIT=None
@@ -73,7 +74,8 @@ async def partial_read(start_address, cnt):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    
+    global logger
+    logger=get_logger()
     app.state.plc_ip= os.getenv("PLC_IP", "127.0.0.1")
     app.state.plc_port=os.getenv("PLC_PORT")
     logger.info(f'读取plc IP: {app.state.plc_ip}, 端口{app.state.plc_port}')
@@ -136,6 +138,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.include_router(user_request_router, tags=["用户请求管理"])
 app.include_router(gran_router, tags=["仓房管理"])
+app.include_router(venti_router, tags=["venti-mode config"])
 
 
 # 1. 解决跨域问题（允许 Vue 前端和手机端访问）
@@ -352,7 +355,7 @@ async def process_power():
         
         app.state.global_power_cache = data
         if app.state.num_ticks == STORAGE_INTERVAL:
-            logger.info('done power read ',data)
+            # logger.info('done power read ',data)
             await prep_store_data_cache(app.state.global_power_cache, 'plc_power_data','power')
             logger.info(f'【功率数据存储成功】{datetime.now()}')
     except Exception as e:

@@ -46,7 +46,6 @@ Base = declarative_base()
 
 # 依赖项：获取数据库会话
 async def get_db():
-    # db = SessionLocal()
     try:
         async with AsyncSessionLocal() as session:
             yield session

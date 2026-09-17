@@ -30,8 +30,6 @@ class GranaryOut(GranaryBase):
         from_attributes = True  # 允许兼容 SQLAlchemy 模型自动转换
 
 
-
-
 class AlarmLogBase(BaseModel):
     # id: int = Field(..., description="", example="TEMP_HIGH")
     type: str = Field(..., description="报警类型", example="TEMP_HIGH")
@@ -66,7 +64,44 @@ class AlarmLogResponse(BaseModel):
     items: List[AlarmLogBase] # 当前页的报警数组
 
 
-    
+# 1. 基础 Schema（定义公共字段和校验规则）
+class VentilationModeBase(BaseModel):
+    name: str = Field(..., max_length=50, description="模式名称")
+    start_temp_diff: float = Field(..., description="起始温差")
+    start_humidity_diff: float = Field(..., description="起始湿度差")
+    end_temp_diff: float = Field(..., description="结束温差")
+    end_humidity_diff: float = Field(..., description="结束湿度差")
+
+# 2. 用于创建（POST 请求）的 Schema
+class VentilationModeCreate(VentilationModeBase):
+    pass  # 字段与 Base 一致
+
+# 3. 用于部分更新（PATCH 请求）的 Schema（所有字段变为可选）
+class VentilationModeUpdate(VentilationModeBase):
+    # name: Optional[str] = Field(None, max_length=50, description="模式名称")
+    # start_temp_diff: Optional[float] = Field(None, description="起始温差")
+    # start_humidity_diff: Optional[float] = Field(None, description="起始湿度差")
+    # end_temp_diff: Optional[float] = Field(None, description="结束温差")
+    # end_humidity_diff: Optional[float] = Field(None, description="结束湿度差")
+    pass
+
+# 4. 用于返回数据（Response）的 Schema
+class VentilationModeOut(VentilationModeBase):
+    id: int = Field(..., description="自增主键 ID")
+
+    class Config:
+        # 允许直接从 SQLAlchemy 等 ORM 模型对象中读取数据转换
+        from_attributes = True  # 注：如果使用 Pydantic v2，请改为 from_attributes = True
+
+# 通用的分页结果包装 Schema
+class VentilationModePageResult(BaseModel):
+    total: int = 0  # 总数据量
+    items: List[VentilationModeOut] = []  # 当前页的数据列表
+
+    class Config:
+        from_attributes = True  # Pydantic v1 写法（v2 请改为 from_attributes = True）
+
+
 
 
 
