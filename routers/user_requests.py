@@ -19,6 +19,8 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from pydantic import BaseModel
 
+from services.venti_service import VentiConfigService
+
 
 router = APIRouter(tags=["用户模块"])
 batch_dev_address={'window':31,'door':32}
@@ -161,6 +163,9 @@ async def get_history_alarms(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="系统内部业务处理异常"
         )
+
+
+
 
 
 @router.websocket("/ws/dev-state")
@@ -407,6 +412,27 @@ async def control_window(request: Request, data: dict):
             print(f"/api/dev/control 写入PLC异常: {e}")
     return {"success": True}
 
+
+
+
+
+@router.post("/api/schedule/venti")
+async def venti_schedule(request: Request, data: dict):
+    devices = data.get('devices')
+    convert_dev_addr(devices)
+    print(devices)
+
+
+
+def convert_dev_addr(devices):
+    # {
+    # 'windows': [1, 4], 'dampers': [], 'exhaustFans': [], 'airConditioners': [], 
+    # 'blowers': {'1': None, '2': 1, '3': None, '4': None, '5': None, '6': None, '7': 1, '8': None}
+    # }
+    converted={}
+    if devices['windows']:
+        for index in devices['windows']:
+            pass
 
 # 报警确认
 @router.post("/api/alarm/ack")

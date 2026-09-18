@@ -10,10 +10,29 @@ tags:
   - "web"
 
 granaries:
-  - code: 001
+  - code: '001'
     PLC_IP: 192.168.0.20
     PLC_PORT: 503
-  
-  - code: 002
+    devices_addr:
+      windows:
+        - 1
+        - 10
+      # 风门
+      dampers:
+        - 11
+        - 18
+      # 风机
+      blowers:
+        - 19
+        - 26
+      # 排风扇
+      exhaustFans:
+        - 27
+        - 30  
+      # 空调
+      airConditioners:
+        - 33
+        - 34
+  - code: '002'
     PLC_IP: 192.168.0.20
     PLC_PORT: 502

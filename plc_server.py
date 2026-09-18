@@ -19,6 +19,7 @@ from database import AsyncSessionLocal, Base, engine
 from routers.user_requests import router as user_request_router
 from routers.venti_router import router as venti_router
 from routers.gran_router import read_granaries, router as gran_router
+import yaml
 
 # 设置日志级别为 DEBUG，并自定义格式
 # logging.basicConfig(
@@ -54,6 +55,18 @@ load_dotenv(dotenv_path=f".env.{args.env}")
 # todo: 写在配置文件里
 # dev_start_address={'win':1,'door':11,'fan':19,'exhaust':27,'ac':33}
 
+def load_device_addr():
+    logger.info('to load yaml')
+    with open(f'{args.env}.yaml', 'r', encoding='utf-8') as file:
+        # 2. 使用 yaml.safe_load 读取文件内容
+        config_data = yaml.safe_load(file)
+        granaries = config_data.get('granaries', [])
+        for item in granaries:
+            if item.get('code') == HOUSE_CODE:
+                return item.get('devices_addr')
+        return None
+        # print(config_data['granaries'][0])  # 输出: localhost
+
 plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
 logger=None;
@@ -76,6 +89,15 @@ async def partial_read(start_address, cnt):
 async def lifespan(app: FastAPI):
     global logger
     logger=get_logger()
+
+    dev_addrs=load_device_addr()
+    logger.info(dev_addrs)
+    if dev_addrs:
+        app.state.dev_addrs = dev_addrs
+    else:
+        logger.error('无法读取设备地址')
+        raise Exception("【采集温度数据失败】PLC 内部错误响应")
+    
     app.state.plc_ip= os.getenv("PLC_IP", "127.0.0.1")
     app.state.plc_port=os.getenv("PLC_PORT")
     logger.info(f'读取plc IP: {app.state.plc_ip}, 端口{app.state.plc_port}')
