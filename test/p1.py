@@ -11,10 +11,6 @@ async def gen():
 
 
 if __name__ == "__main__":
-    result=[1]
-    if result:
-        print('data')
+   pass
     
 
-
-    

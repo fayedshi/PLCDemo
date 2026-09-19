@@ -13,11 +13,13 @@ import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 
+from config_loader import load_config
 
-with open('dev.yaml', 'r', encoding='utf-8') as file:
-    # 2. 使用 yaml.safe_load 读取文件内容
-    config_data = yaml.safe_load(file)
+# with open('dev.yaml', 'r', encoding='utf-8') as file:
+#     # 2. 使用 yaml.safe_load 读取文件内容
+#     config_data = yaml.safe_load(file)
 
+config_data=load_config()
 # 查看读取出来的 Python 字典
 print(config_data)
 

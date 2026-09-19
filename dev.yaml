@@ -9,6 +9,10 @@ tags:
   - "dev"
   - "web"
 
+INFLUX_DB:
+  URL: http://localhost:8181
+  TOKEN: apiv3_ntcKjOE7rToG5Z9tcxJ9XQj1_8Bm-ANFgIECpNtyhPeBuSJstAglB_pF1awNFt9oUcCZL4Og9kwd3wnMDG29gQ
+
 granaries:
   - code: '001'
     PLC_IP: 192.168.0.20
@@ -33,6 +37,16 @@ granaries:
       airConditioners:
         - 33
         - 34
+      temp:
+        - 35
+        - 174
+      humid:
+        - 175
+        - 314
+      window-state:
+        - 365
+        - 374
+      
   - code: '002'
     PLC_IP: 192.168.0.20
     PLC_PORT: 502

@@ -1,7 +1,3 @@
-import argparse
-import os
-
-from dotenv import load_dotenv
 import uvicorn
 import asyncio
 from fastapi import FastAPI
@@ -19,70 +15,34 @@ from database import AsyncSessionLocal, Base, engine
 from routers.user_requests import router as user_request_router
 from routers.venti_router import router as venti_router
 from routers.gran_router import read_granaries, router as gran_router
-import yaml
-
-# 设置日志级别为 DEBUG，并自定义格式
-# logging.basicConfig(
-#     level=logging.error,
-#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-# )
-
-# logging.info('这是一条基础信息日志')
+from config_loader import load_config
 
 # ==================== 1. 全局变量 ====================
 # 全局共享的 PLC 最新数据缓存（所有手机都来这里拿数据，不直接轰炸 PLC）
 
-plc_client = None
-
 DATABASE_NAME='my_db'
 STORAGE_INTERVAL=300
 
-# HOUSE_CODE=None
-
 # 1. 解析参数并加载环境（必须在最外层）
-parser = argparse.ArgumentParser()
-parser.add_argument('--env', choices=['dev', 'test'], default='dev')
-parser.add_argument('--house-code', help="粮仓代码 (必填)")
-args, _ = parser.parse_known_args()
-if not args.house_code:
-    # 使用 parser.error 会打印错误信息、显示帮助文档并自动执行 sys.exit(2) 退出
-    parser.error("缺少必填参数: --house-code")
+# parser = argparse.ArgumentParser()
+# parser.add_argument('--env', choices=['dev', 'test'], default='dev')
+# parser.add_argument('--house-code', help="粮仓代码 (必填)")
+# args, _ = parser.parse_known_args()
+# if not args.house_code:
+#     # 使用 parser.error 会打印错误信息、显示帮助文档并自动执行 sys.exit(2) 退出
+#     parser.error("缺少必填参数: --house-code")
 
-HOUSE_CODE = args.house_code
+# HOUSE_CODE = args.house_code
 
-load_dotenv(dotenv_path=f".env.{args.env}")
+# load_dotenv(dotenv_path=f".env.{args.env}")
 
 # todo: 写在配置文件里
 # dev_start_address={'win':1,'door':11,'fan':19,'exhaust':27,'ac':33}
 
-def load_device_addr():
-    logger.info('to load yaml')
-    with open(f'{args.env}.yaml', 'r', encoding='utf-8') as file:
-        # 2. 使用 yaml.safe_load 读取文件内容
-        config_data = yaml.safe_load(file)
-        granaries = config_data.get('granaries', [])
-        for item in granaries:
-            if item.get('code') == HOUSE_CODE:
-                return item.get('devices_addr')
-        return None
-        # print(config_data['granaries'][0])  # 输出: localhost
-
 plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
-logger=None;
-
-# active_alarms = {}
-# app.state.TEMP_UPPER_LIMIT=None
-
-# 最多读取120个寄存器
-async def partial_read(start_address, cnt):
-    async with plc_lock:
-        result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
-    if not result.isError():
-        # logger.info(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
-        return result.registers
-    else:
-        raise Exception("【采集温度数据失败】PLC 内部错误响应")
+logger=None
+config_data=load_config()
 
 
 @asynccontextmanager
@@ -90,32 +50,28 @@ async def lifespan(app: FastAPI):
     global logger
     logger=get_logger()
 
-    dev_addrs=load_device_addr()
-    logger.info(dev_addrs)
-    if dev_addrs:
-        app.state.dev_addrs = dev_addrs
-    else:
-        logger.error('无法读取设备地址')
-        raise Exception("【采集温度数据失败】PLC 内部错误响应")
+    # app.state.plc_ip= os.getenv("PLC_IP", "127.0.0.1")
+    # app.state.plc_port=os.getenv("PLC_PORT")
+    # logger.info(f'读取plc IP: {app.state.plc_ip}, 端口{app.state.plc_port}')
     
-    app.state.plc_ip= os.getenv("PLC_IP", "127.0.0.1")
-    app.state.plc_port=os.getenv("PLC_PORT")
-    logger.info(f'读取plc IP: {app.state.plc_ip}, 端口{app.state.plc_port}')
-    app.state.influx_db_url=os.getenv("INFLUX_DB_URL")
-    app.state.influx_token=os.getenv("INFLUX_TOKEN")
+    app.state.num_ticks = []
 
-    app.state.num_ticks = 1
+    app.state.global_plc_cache = [[]]
+    app.state.global_display_temp_cache = [[]]
 
-    app.state.global_plc_cache = []
-    app.state.global_display_temp_cache = []
-
-    app.state.global_humid_cache=[]
-    app.state.global_power_cache=[]
+    app.state.global_humid_cache=[[]]
+    app.state.global_power_cache=[[]]
 
     # alarms
     app.state.active_alarms={}
     app.state.partial_read=partial_read
     app.state.write_single_reg=write_single_reg
+
+    app.state.influx_db_url=config_data["INFLUX_DB"]['URL']
+    app.state.influx_token=config_data["INFLUX_DB"]["TOKEN"]
+    
+    granaries = config_data.get('granaries', [])
+
     async with engine.begin() as conn:
         # 如果表不存在，则自动创建（生产环境建议使用 Alembic 迁移）
         await conn.run_sync(Base.metadata.create_all)
@@ -124,38 +80,49 @@ async def lifespan(app: FastAPI):
     logger.info("\n--- 📊 当前环境配置变量 ---")
     logger.info(f"后端服务 (influx_DB_URL): {app.state.influx_db_url}")
 
-    # 全局初始化一次异步客户端
-    global plc_client
-    # global app.state.TEMP_UPPER_LIMIT
     try:
+        polling_tasks=[]
+        plc_clients=[]
+        for index, gran in enumerate(granaries):
+            plc_client = AsyncModbusTcpClient(gran['PLC_IP'], port=gran['PLC_PORT'], 
+                reconnect_delay=1.0,
+                reconnect_delay_max=120 
+            )
+            logger.info("【系统启动】正在尝试与 PLC 建立唯一的长连接...")
+            await plc_client.connect()
+            logger.info("【lifespan】物理通道已建立")
+
+            plc_clients.append(plc_client)
+            app.state.num_ticks[index] = 1
+            # 从数据库中读取该仓房的温度报警上限
+            gran_list= await read_granary_max_temp(gran['code'])
+            if gran_list:
+                app.state.TEMP_UPPER_LIMIT=gran_list[0].max_temp
+                logger.info(f'temp upper limit {app.state.TEMP_UPPER_LIMIT}')
+            else:
+                raise Exception('【ERROR：无法读取仓房温度上限】')
+            
+            # 从配置文件中读取设备地址
+            # dev_addrs = load_device_addr()
+            app.state.dev_addrs[index] = gran['dev_addrs']
+            logger.info(app.state.dev_addrs)
         
-        plc_client = AsyncModbusTcpClient(app.state.plc_ip, port=app.state.plc_port, 
-            reconnect_delay=1.0,
-            reconnect_delay_max=120 
-        )
-        logger.info("【系统启动】正在尝试与 PLC 建立唯一的长连接...")
-        await plc_client.connect()
-        logger.info("【lifespan】物理通道已建立")
-        granaries= await read_granary_conf()
-        if granaries:
-            app.state.TEMP_UPPER_LIMIT=granaries[0].max_temp
-            logger.info(f' temp upper limit {app.state.TEMP_UPPER_LIMIT}')
-        else:
-            raise Exception('【ERROR：无法读取仓房温度上限】')
-        polling_job=asyncio.create_task(plc_polling_task())
+            polling_job = asyncio.create_task(plc_polling_task(index, plc_client, gran['code']))
+            polling_tasks.append(polling_job) 
         yield
 
     finally:
-        # 关闭：断开 PLC 连接
-        logger.info("正在断开 PLC 连接...")
-        polling_job.cancel()
+        logger.info("正在断开 所有PLC 连接...")
+        for task in polling_tasks:
+            task.cancel()
 
         try:
-            await asyncio.gather(polling_job)
+            await asyncio.gather(*polling_tasks)
         except asyncio.CancelledError:# interupted exception
             pass
-        plc_client.close()
-        logger.info("###采集任务已停止，与PLC的连接已释放完毕")
+        for plc_client in plc_clients:
+            plc_client.close()
+            logger.info(f"###{plc_client}采集任务已停止，与PLC的连接已释放完毕")
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(user_request_router, tags=["用户请求管理"])
@@ -171,10 +138,44 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-async def read_granary_conf():
+
+
+# def register_glob_vars(app: FastAPI):
+
+
+# def load_device_addr():
+#     logger.info('to load yaml')
+#     # with open(f'{args.env}.yaml', 'r', encoding='utf-8') as file:
+#     #     # 2. 使用 yaml.safe_load 读取文件内容
+#     #     config_data = yaml.safe_load(file)
+#     # config_data = load_config(args.env)
+#     granaries = config_data.get('granaries', [])
+#     for item in granaries:
+#         if item.get('code') == HOUSE_CODE:
+#             return item.get('devices_addr')
+#     return None
+        # print(config_data['granaries'][0])  # 输出: localhost
+
+
+
+# active_alarms = {}
+# app.state.TEMP_UPPER_LIMIT=None
+
+# 最多读取120个寄存器
+async def partial_read(plc_client, start_address, cnt):
+    async with plc_lock:
+        result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
+    if not result.isError():
+        # logger.info(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
+        return result.registers
+    else:
+        raise Exception("【采集温度数据失败】PLC 内部错误响应")
+
+
+async def read_granary_max_temp(gran_code):
     async with AsyncSessionLocal() as session:
         granaries = await read_granaries(
-            code = "001", 
+            code = gran_code, 
             name=None,
             grain_type=None, 
             keeper=None, 
@@ -184,38 +185,37 @@ async def read_granary_conf():
         return granaries
 
     
-async def plc_polling_task():
+async def plc_polling_task(index, plc_client, house_code):
     """该任务在后台独立运行，有且仅有它一个人维持与 PLC 的长连接"""
-    # global global_plc_cache, global_display_temp_cache, global_humid_cache
-    # HOUSE_CODE='001'
     event_type='PLC_DISCONNECT'
-    # alarm_key = f"{HOUSE_CODE}_{event_type}"
     while True:
         if not plc_client.connected:
             logger.error("【连接断开，等待自动重连】")
             await asyncio.sleep(3)
             # todo: 断开三次以上才记录alarm
-            msg=f"❌ 通信故障：{HOUSE_CODE} PLC 连接断开！"
+            msg=f"❌ 通信故障：{house_code} PLC 连接断开！"
             # alarm_data = create_alarm_json(event_type, HOUSE_CODE, f"❌ 通信故障：{HOUSE_CODE} PLC 连接断开！")
             # if not app.state.active_alarms[alarm_key]:
             # gen_alarm(alarm_key, alarm_data)
-            await gen_alarm(event_type, HOUSE_CODE, msg)
+            await gen_alarm(event_type, house_code, msg)
             logger.info('after gen_alarm for plc')
             continue
         try:
-            await clear_alarm(event_type, HOUSE_CODE)
-            app.state.num_ticks += 1
+            await clear_alarm(event_type, house_code)
+            app.state.num_ticks[index] += 1
             await asyncio.gather(
-                process_temp(),
-                process_humid(),
-                process_power()
+                process_temp(index, plc_client, house_code),
+                process_humid(index, plc_client, house_code),
+                process_power(index, plc_client, house_code),
+                # todo: collect devices states
+                # process_dev_state(plc_client, house_code),   
             )
             
         except Exception as e:
             logger.info(f"【采集异常】: {e}, {datetime.now()}")
         finally:
-            if app.state.num_ticks==STORAGE_INTERVAL:
-                app.state.num_ticks = 1
+            if app.state.num_ticks[index]==STORAGE_INTERVAL:
+                app.state.num_ticks[index] = 1
         # 每1秒采集一次
         await asyncio.sleep(1)
 
@@ -229,19 +229,19 @@ def check_cache_val(data_cache):
     return True
 
 # UNACK_ACTIVE(未确未复), ACK_ACTIVE(已确未复), UNACK_CLEAR(未确已复)
-async def check_temp_alarm(event_type, data_cache):
+async def check_temp_alarm(event_type, data_cache, house_code):
     curr_max_temp = round(max(data_cache)/10,1)
     # logger.info('current max temperature: ',curr_max_temp,' limit ',app.state.TEMP_UPPER_LIMIT)
     if curr_max_temp >= app.state.TEMP_UPPER_LIMIT:
         #  已经存在的话，就不去更新，保留第一条alarm
         # if temp_key not in app.state.active_alarms or not app.state.active_alarms[temp_key]:
-        msg = f"🔥 温度超限：{HOUSE_CODE} 当前温度 {curr_max_temp}℃ 超过设定的 {app.state.TEMP_UPPER_LIMIT}℃！"
+        msg = f"🔥 温度超限：{house_code} 当前温度 {curr_max_temp}℃ 超过设定的 {app.state.TEMP_UPPER_LIMIT}℃！"
         # logger.info('to generate alarm')
-        await gen_alarm(event_type, HOUSE_CODE, msg)
+        await gen_alarm(event_type, house_code, msg)
     # 当前温度小于阈值 0.5°的回差以上才消除警报
     elif app.state.TEMP_UPPER_LIMIT - curr_max_temp >=0.5:
         # logger.info('going to clear alarm')
-        await clear_alarm(event_type, HOUSE_CODE)
+        await clear_alarm(event_type, house_code)
             
 async def clear_alarm(event_type, house_code):
     alarm_key = f"{house_code}_{event_type}"
@@ -311,12 +311,12 @@ async def gen_alarm(event_type, house_code, msg):
 
 
 
-async def process_temp():
+async def process_temp(index, plc_client, house_code):
     try:
-        temp_data=await partial_read(35,120)
+        temp_data=await partial_read(plc_client,35,120)
         # logger.info(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: {datetime.now()}")
         # break
-        temp_data.extend(await partial_read(155,20))
+        temp_data.extend(await partial_read(plc_client,155,20))
         # 临时加入，检查异常值，可能不需要
         res =  check_cache_val(temp_data)
         if not res:
@@ -325,44 +325,44 @@ async def process_temp():
             return
 
         # check alarm and format display data and store temp
-        await asyncio.gather(check_temp_alarm('TEMP_HIGH', temp_data), 
-                             format_temp_data(temp_data), 
-                             store_temp_data(), return_exceptions=True)
+        await asyncio.gather(check_temp_alarm('TEMP_HIGH', temp_data, house_code), 
+                             format_display_temp(index,temp_data), 
+                             store_temp_data(index,temp_data, house_code), return_exceptions=True)
         
     except Exception as e:
         logger.info(f'############## poll_and_store_temp 发生异常: {e}, {datetime.now()}')
 
 
-async def format_temp_data(temp_data):
+async def format_display_temp(index,temp_data):
     # logger.info('after check_temp')
-    app.state.global_plc_cache = temp_data
+    app.state.global_plc_cache[index] = temp_data
     temp_data = [round(x / 10, 1) for x in temp_data]
-    app.state.global_display_temp_cache=temp_data
+    app.state.global_display_temp_cache[index] = temp_data
 
-async def store_temp_data():
-    if app.state.num_ticks==STORAGE_INTERVAL:
-        await prep_store_data_cache(app.state.global_plc_cache, 'plc_temp_data','temp')
+async def store_temp_data(index, temp_data, house_code):
+    if app.state.num_ticks[index]==STORAGE_INTERVAL:
+        await prep_store_data_cache(temp_data, house_code, 'plc_temp_data','temp')
         logger.info(f'【温度数据存储成功】{datetime.now()}')
 
-async def process_humid():
+async def process_humid(index, plc_client, house_code):
     try:
         # 读取140个湿度数据
-        humid_cache=await partial_read(175,120)
-        humid_cache.extend(await partial_read(195,20))
+        humid_cache=await partial_read(plc_client, 175,120)
+        humid_cache.extend(await partial_read(plc_client,195,20))
         if not check_cache_val(humid_cache):
             logger.info(f"*****************PLC内部异常 in poll_and_store_humid: ，等待2分钟")
             await asyncio.sleep(120)
             return
-        app.state.global_humid_cache=humid_cache
-        if app.state.num_ticks==STORAGE_INTERVAL:
-            await prep_store_data_cache(app.state.global_humid_cache, 'plc_humid_data','humid')
+        app.state.global_humid_cache[index] = humid_cache
+        if app.state.num_ticks[index]==STORAGE_INTERVAL:
+            await prep_store_data_cache(humid_cache, house_code, 'plc_humid_data','humid')
             logger.info(f'【湿度数据存储成功】{datetime.now()}')
     except Exception as e:
         logger.info(f'############## poll_and_store_humid 发生异常: {e}, {datetime.now()}')
 
-async def process_power():
+async def process_power(index, plc_client, house_code):
     try:
-        raw_regs=await partial_read(405,10)
+        raw_regs=await partial_read(plc_client,405,10)
         data = []
         # 每次跳 2 步
         for i in range(0, len(raw_regs), 2):
@@ -375,15 +375,15 @@ async def process_power():
             else:
                 data.append(round(registers_to_val(raw_regs[i],raw_regs[1+1],'f'),1))
         
-        app.state.global_power_cache = data
-        if app.state.num_ticks == STORAGE_INTERVAL:
+        app.state.global_power_cache[index] = data
+        if app.state.num_ticks[index] == STORAGE_INTERVAL:
             # logger.info('done power read ',data)
-            await prep_store_data_cache(app.state.global_power_cache, 'plc_power_data','power')
+            await prep_store_data_cache(data, house_code, 'plc_power_data','power')
             logger.info(f'【功率数据存储成功】{datetime.now()}')
     except Exception as e:
-        logger.info(f'############## poll_and_store_power 发生异常: {e}, {datetime.now()}')
+        logger.error(f'############## poll_and_store_power 发生异常: {e}, {datetime.now()}')
 
-async def prep_store_data_cache(data_cache, table, field_prefix):
+async def prep_store_data_cache(data_cache, house_code, table, field_prefix):
     try:
         plc_channels={}
         for i in range(0, len(data_cache)):
@@ -391,7 +391,7 @@ async def prep_store_data_cache(data_cache, table, field_prefix):
             # logger.info(global_plc_cache[i])
         device_tags = {
             "plc_type": "s7-smart200",
-            "station_id": "line_01"
+            "station_id": house_code
         }
 
         # 动态生成 len(data_cache) 个字段的行协议数据,如果这步发生异常，就直接catch，不往下走，所以build_influx_line_protocol中

@@ -6,43 +6,39 @@ import asyncio
 from influxdb_client_3 import InfluxDBClient3
 import numpy as np
 import pandas as pd
-from sqlalchemy import select
 
-from database import AsyncSessionLocal
 from date_util import to_utctime
-import models
 from schemas import AlarmLogResponse
 from services.alarm_service import AlarmService
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
-from pydantic import BaseModel
-
-from services.venti_service import VentiConfigService
 
 
-router = APIRouter(tags=["用户模块"])
+
+router = APIRouter(tags=["web请求模块"])
 batch_dev_address={'window':31,'door':32}
 
 
 # 3. WebSocket 接口（用于向手机和本地 Vue 实时推送 Modbus 数据）
-@router.websocket("/ws/live")
-async def websocket_endpoint(websocket: WebSocket):
+@router.websocket("/ws/live/{gran_code}")
+async def websocket_endpoint(websocket: WebSocket, gran_code: str):
     
     await websocket.accept()
     print("【后端提示】/ws/live前端客户端已连接！")
     try:
+        house_index= int(gran_code) -1
         while True:
             # plc_data = global_display_temp_cache
             # print('in live ',global_plc_cache)
-            if not websocket.app.state.global_plc_cache:
+            if not websocket.app.state.global_plc_cache[house_index]:
                 await asyncio.sleep(2)
                 continue
-            avg_temp=round(statistics.mean(websocket.app.state.global_display_temp_cache),1)
-            avg_humid=round(statistics.mean(websocket.app.state.global_humid_cache)/10,1)
+            avg_temp=round(statistics.mean(websocket.app.state.global_display_temp_cache[house_index]),1)
+            avg_humid=round(statistics.mean(websocket.app.state.global_humid_cache[house_index])/10,1)
             # websocket.app.state.global_power_cache
-            send_buffer=websocket.app.state.global_power_cache[:4]
+            send_buffer=websocket.app.state.global_power_cache[house_index][:4]
             # data=[avg_temp,avg_humid]
             send_buffer.extend([avg_temp,avg_humid])
             # print(data)
@@ -73,61 +69,6 @@ async def websocket_alarms_endpoint(websocket: WebSocket):
 
     # except WebSocketDisconnect:
         # connected_clients.remove(websocket)
-
-# @router.get("/history", response_model=List[AlarmResponse])
-# async def get_history_alarms(
-#     house_id: Optional[int] = Query(None, description="按仓房ID筛选"),
-#     severity: Optional[str] = Query(None, description="按严重程度筛选 (info/warning/critical)"),
-#     start_time: Optional[datetime] = Query(None, description="开始时间 (ISO格式，如 2026-03-30T00:00:00)"),
-#     end_time: Optional[datetime] = Query(None, description="结束时间"),
-#     page: int = Query(1, ge=1, description="当前页码"),
-#     size: int = Query(20, ge=1, le=100, description="每页条数，最大100")
-# ):
-#     """
-#     获取历史报警记录（支持多条件筛选与高效分页）
-#     """
-#     # 🎯 开启异步会话（纯读取操作，无需使用 session.begin() 开启事务）
-#     async with AsyncSessionLocal() as session:
-#         try:
-#             # 1. 构建基础查询语句（按时间倒序排列，最新报警在前）
-#             query = select(AlarmLog).order_by(desc(AlarmLog.created_at))
-            
-#             # 2. 动态拼装筛选条件
-#             if house_id is not None:
-#                 query = query.where(AlarmLog.house_id == house_id)
-                
-#             if severity is not None:
-#                 query = query.where(AlarmLog.severity == severity)
-                
-#             if start_time is not None:
-#                 query = query.where(AlarmLog.created_at >= start_time)
-                
-#             if end_time is not None:
-#                 query = query.where(AlarmLog.created_at <= end_time)
-            
-#             # 3. 执行分页切片 (Pagination)
-#             offset = (page - 1) * size
-#             query = query.offset(offset).limit(size)
-            
-#             # 4. 执行异步查询
-#             result = await session.execute(query)
-#             alarms = result.scalars().all()
-            
-#             return alarms
-            
-#         except Exception as e:
-#             # 发生不可预知的数据库异常时，记录日志并安全向前端抛出
-#             print(f"查询历史报警数据库失败: {str(e)}")
-#             raise HTTPException(
-#                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#                 detail="系统内部数据库查询异常"
-#             )
-
-# 假设的导入路径
-# from database import AsyncSessionLocal
-# from services.alarm import AlarmService
-
-# router = APIRouter(prefix="/api/alarms", tags=["历史报警"])
 
 # --- API 接口定义 ---
 @router.get("/api/alarms/history", response_model=AlarmLogResponse)
@@ -164,10 +105,7 @@ async def get_history_alarms(
             detail="系统内部业务处理异常"
         )
 
-
-
-
-
+# todo: add house code
 @router.websocket("/ws/dev-state")
 async def websocket_dev_state_endpoint(websocket: WebSocket):
     # global dev_state_cache
