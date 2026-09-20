@@ -3,6 +3,7 @@ from datetime import timedelta
 from fastapi import APIRouter, Query, Request,WebSocket
 import statistics
 import asyncio 
+from config_loader import load_config
 from influxdb_client_3 import InfluxDBClient3
 import numpy as np
 import pandas as pd
@@ -354,23 +355,41 @@ async def control_window(request: Request, data: dict):
 
 
 
-@router.post("/api/schedule/venti")
+@router.post("/api/venti/adhoc")
 async def venti_schedule(request: Request, data: dict):
     devices = data.get('devices')
-    convert_dev_addr(devices)
+    convert_dev_addr(devices,data.get('house_code'))
     print(devices)
 
 
 
-def convert_dev_addr(devices):
+def convert_dev_addr(devices, house_code):
     # {
     # 'windows': [1, 4], 'dampers': [], 'exhaustFans': [], 'airConditioners': [], 
     # 'blowers': {'1': None, '2': 1, '3': None, '4': None, '5': None, '6': None, '7': 1, '8': None}
     # }
     converted={}
-    if devices['windows']:
-        for index in devices['windows']:
+    if devices['dampers']:
+        for id in devices['windows']:
             pass
+    silo_config= load_silo_config(house_code)
+
+    for key, value in devices.items():
+        print(f"键: {key} -> 值: {value}")
+        addrs=devices[key]
+        offset=silo_config[key][0]
+        real_addrs = [addr + offset - 1 for addr in addrs]
+
+            
+
+def load_silo_config(house_code):
+    config_data=load_config()
+    granaries = config_data.get('granaries', []) 
+    for silo in granaries:
+        if (int)(silo['code'])==house_code:
+            return silo['devices_addr']
+    return None
+
 
 # 报警确认
 @router.post("/api/alarm/ack")
