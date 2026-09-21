@@ -123,7 +123,10 @@ async def update_granary(request: Request, item_id: int, obj_in: schemas.Granary
     await db.refresh(db_item)
 
     # 同时更新内存中temp threshold
-    request.app.state.TEMP_UPPER_LIMIT = obj_in.max_temp
+    
+    print(f'house code, {db_item.code}')
+    house_index=int(db_item.code) -1
+    request.app.state.TEMP_UPPER_LIMIT_LIST[house_index] = obj_in.max_temp
     print(f'【已更新仓房{obj_in.code}温度上限值】为{obj_in.max_temp}')
     return db_item
 

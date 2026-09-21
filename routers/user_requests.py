@@ -29,7 +29,9 @@ async def websocket_endpoint(websocket: WebSocket, gran_code: str):
     await websocket.accept()
     print("【后端提示】/ws/live前端客户端已连接！")
     try:
-        house_index= int(gran_code) -1
+        house_index = int(gran_code) -1
+        websocket.app.state.read_temp_humid_interval[house_index]= 2
+        websocket.app.state.read_power_interval[house_index]=2
         while True:
             # plc_data = global_display_temp_cache
             # print('in live ',global_plc_cache)
@@ -48,6 +50,9 @@ async def websocket_endpoint(websocket: WebSocket, gran_code: str):
             await asyncio.sleep(2)
     except Exception as e:
         print(f"客户端/ws/live断开连接: {e}")
+    finally:
+        websocket.app.state.read_temp_humid_interval[house_index]= 100
+        websocket.app.state.read_power_interval[house_index]=300
 
 
 # 4. WebSocket 接口：供前端实时连接
@@ -57,6 +62,9 @@ async def websocket_alarms_endpoint(websocket: WebSocket):
     print(f"客户端/ws/alarms已连接:")
     # connected_clients.add(websocket)
     try:
+        # 不需要分仓房，本来就是收集多个仓房
+        # house_index = int(house_code) -1
+        websocket.app.state.read_alarm_interval= 2
         while True:
             # await websocket.receive_text() # 维持心跳
             # print(f'alarms: {websocket.app.state.active_alarms}')
@@ -64,7 +72,7 @@ async def websocket_alarms_endpoint(websocket: WebSocket):
             await websocket.send_json(
                 websocket.app.state.active_alarms
             )
-            await asyncio.sleep(10)
+            await asyncio.sleep(2)
     except Exception as e:
         print(f"客户端/ws/alarms断开连接: {e}")
 
@@ -108,14 +116,16 @@ async def get_history_alarms(
 
 # todo: add house code
 @router.websocket("/ws/dev-state")
-async def websocket_dev_state_endpoint(websocket: WebSocket):
+async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
     # global dev_state_cache
     await websocket.accept()
     print("【后端提示】发现/ws/dev-state前端客户端已连接！")
     try:
+        house_index = int(house_code) -1
+        plc_client=websocket.app.state.plc_conns[house_index]
         while True:
             read_plc_func=websocket.app.state.partial_read
-            dev_state_cache = await read_plc_func(365,32)
+            dev_state_cache = await read_plc_func(plc_client,365,32)
             await websocket.send_json(dev_state_cache)
             # send to vue every 2 sec
             await asyncio.sleep(1)
