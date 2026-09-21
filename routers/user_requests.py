@@ -390,14 +390,21 @@ def convert_dev_addr(devices, house_code):
     #         pass
     silo= load_silo_config(house_code)
     actions={}
+    blowers=devices['blowers']
+    filtered_blowers = {key + offset - 1: value for key, value in blowers.items() if value is not None}
     for key, value in devices.items():
         print(f"键: {key} -> 值: {value}")
         addrs=devices[key]
         offset=silo[key][0]
-        real_addrs = [addr + offset - 1 for addr in addrs]
-        for addr in addrs:
-            if key =='blowers':
-                actions[]
+        # real_addrs = [addr + offset - 1 for addr in addrs]
+        # for addr in addrs:
+        if key !='blowers':
+            # actions[]
+            
+        # else:
+            filtered_dict = {num + offset - 1: 1 for num in addrs}
+
+    merged_dict = filtered_blowers | filtered_dict
 
             
 
