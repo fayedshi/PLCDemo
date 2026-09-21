@@ -22,6 +22,9 @@ router = APIRouter(tags=["web请求模块"])
 batch_dev_address={'window':31,'door':32}
 
 
+config_data=load_config()
+granaries = config_data.get('granaries', [])
+
 # 3. WebSocket 接口（用于向手机和本地 Vue 实时推送 Modbus 数据）
 @router.websocket("/ws/live/{gran_code}")
 async def websocket_endpoint(websocket: WebSocket, gran_code: str):
@@ -122,10 +125,12 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
     print("【后端提示】发现/ws/dev-state前端客户端已连接！")
     try:
         house_index = int(house_code) -1
+        house_config= load_silo_config(house_code) 
+        dev_start= house_config['devices_addr']['window-state'][0]
         plc_client=websocket.app.state.plc_conns[house_index]
         while True:
             read_plc_func=websocket.app.state.partial_read
-            dev_state_cache = await read_plc_func(plc_client,365,32)
+            dev_state_cache = await read_plc_func(plc_client,dev_start,32)
             await websocket.send_json(dev_state_cache)
             # send to vue every 2 sec
             await asyncio.sleep(1)
@@ -395,9 +400,12 @@ def convert_dev_addr(devices, house_code):
 def load_silo_config(house_code):
     config_data=load_config()
     granaries = config_data.get('granaries', []) 
-    for silo in granaries:
-        if (int)(silo['code'])==house_code:
-            return silo['devices_addr']
+    house_index = int(house_code) -1
+    
+    # for silo in granaries:
+    #     if (int)(silo['code'])==house_code:
+    #         return silo['devices_addr']
+    return granaries[house_index]
     return None
 
 
