@@ -6,6 +6,7 @@ from datetime import datetime
 from pymodbus.client import AsyncModbusTcpClient
 from contextlib import asynccontextmanager
 import httpx
+from config import settings
 from log.plc_logger import get_logger
 from models import AlarmLog
 from schemas import AlarmLogCreate
@@ -39,11 +40,14 @@ GLOBAL_POLLING_INTERVAL=30
 # todo: 写在配置文件里
 # dev_start_address={'win':1,'door':11,'fan':19,'exhaust':27,'ac':33}
 
+
+
 plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
 logger=None
-config_data=load_config()
-granaries = config_data.get('granaries', [])
+config_data=settings.raw_config
+# granaries = config_data.get('granaries', [])
+granaries= settings.granaries
 silos_cnt=len(granaries)
 
 @asynccontextmanager
@@ -506,7 +510,7 @@ async def send_to_influx(payload_text: str):
         except Exception as e:
             raise Exception(f"[异常] 异步发送过程中发生错误，{datetime.now()}: {e} ")
 
-async def write_single_reg(start_add: int, val:int):
+async def write_single_reg(plc_client, start_add: int, val:int):
     async with plc_lock:
         response = await plc_client.write_register(address=start_add, value=val, device_id=1, no_response_expected=False)
     if response.isError():
