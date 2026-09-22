@@ -31,17 +31,18 @@ granaries = config_data.get('granaries', [])
 async def websocket_endpoint(websocket: WebSocket, gran_code: str):
     
     await websocket.accept()
-    print("【后端提示】/ws/live前端客户端已连接！")
+    print(f"【后端提示】/ws/live前端house-{gran_code}客户端已连接！")
     try:
         house_index = int(gran_code) -1
-        websocket.app.state.read_temp_humid_interval[house_index]= 2
-        websocket.app.state.read_power_interval[house_index]=2
+        websocket.app.state.read_temp_humid_interval[house_index]= 5
+        websocket.app.state.read_power_interval[house_index]=5
         while True:
             # plc_data = global_display_temp_cache
             # print('in live ',global_plc_cache)
-            if not websocket.app.state.global_plc_cache[house_index]:
-                await asyncio.sleep(2)
-                continue
+            # if not websocket.app.state.global_plc_cache[house_index]:
+            #     await asyncio.sleep(2)
+            #     continue
+            # print('global_display_temp_cache in ws/live', websocket.app.state.global_power_cache[house_index])
             avg_temp=round(statistics.mean(websocket.app.state.global_display_temp_cache[house_index]),1)
             avg_humid=round(statistics.mean(websocket.app.state.global_humid_cache[house_index])/10,1)
             # websocket.app.state.global_power_cache
@@ -51,11 +52,11 @@ async def websocket_endpoint(websocket: WebSocket, gran_code: str):
             # print(data)
             await websocket.send_json(send_buffer)
             # send to vue every 2 sec
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
     except Exception as e:
-        print(f"客户端/ws/live断开连接: {e}")
+        print(f"客户端/ws/live断开连接house-{gran_code}: {e}")
     finally:
-        websocket.app.state.read_temp_humid_interval[house_index]= 100
+        websocket.app.state.read_temp_humid_interval[house_index]= 300
         websocket.app.state.read_power_interval[house_index]=300
 
 
@@ -69,6 +70,8 @@ async def websocket_alarms_endpoint(websocket: WebSocket):
         # 不需要分仓房，本来就是收集多个仓房
         # house_index = int(house_code) -1
         websocket.app.state.read_alarm_interval= 2
+        # manual execute once to expose alarms
+        # websocket.app.state.check_temp_alarm('TEMP_HIGH', gran['code'], index)
         while True:
             # await websocket.receive_text() # 维持心跳
             # print(f'alarms: {websocket.app.state.active_alarms}')
@@ -79,6 +82,8 @@ async def websocket_alarms_endpoint(websocket: WebSocket):
             await asyncio.sleep(2)
     except Exception as e:
         print(f"客户端/ws/alarms断开连接: {e}")
+    finally:
+        websocket.app.state.read_alarm_interval= 300
 
     # except WebSocketDisconnect:
         # connected_clients.remove(websocket)
@@ -126,7 +131,7 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
     print("【后端提示】发现/ws/dev-state前端客户端已连接！")
     try:
         house_index = int(house_code) -1
-        house_config= load_silo_config(house_code) 
+        house_config= load_silo_addrs(house_code) 
         dev_start= house_config['devices_addr']['window-state'][0]
         plc_client=websocket.app.state.plc_conns[house_index]
         while True:
@@ -371,44 +376,132 @@ async def control_window(request: Request, data: dict):
 
 
 # 启动的action值，默认为1，都是开窗或启动
-@router.post("/api/venti/adhoc")
+@router.post("/api/venti/adhoc/start")
 async def venti_schedule(request: Request, data: dict):
+    try:
+        devices = data.get('devices')
+        duration= data.get('duration')
+        action_obj= convert_dev_addr(devices,data.get('house_code'),1)
+        print(action_obj)
+        adhoc_job = asyncio.create_task(run_adhoc(request, action_obj, data.get('house_code')))
+        # todo: 这里不会超时，remove timeout later
+        # result = await asyncio.wait_for(adhoc_job, timeout=duration)
+        print(f'正常结束，继续保持{duration}分钟')
+        await asyncio.sleep(duration)
+        # 准备复位
+        print(f'已保持{duration}分钟，准备复位')
+
+        action_obj= convert_dev_addr(devices,data.get('house_code'), 0)
+        print('action obj: ',action_obj)
+        await run_adhoc(request, action_obj, data.get('house_code'))
+        print(f'复位完成')
+    except asyncio.TimeoutError:
+        print(f"【超时错误】: 任务执行超过了设定的 {duration} 分钟限制，已被强制终止！")
+        # print(f"任务是否被取消: {adhoc_job.cancelled()}")
+    except Exception as e:
+        print(f'adhoc job异常:{e}')
+
+
+# 智能作业
+@router.post("/api/venti/sched/start")
+async def venti_schedule(request: Request, data: dict):
+    try:
+        # wait to be triggered
+        check_condition()
+        devices = data.get('devices')
+        duration= data.get('duration')
+        action_obj= convert_dev_addr(devices,data.get('house_code'),1)
+        print(action_obj)
+        adhoc_job = asyncio.create_task(run_adhoc(request, action_obj, data.get('house_code')))
+        # todo: 这里不会超时，remove timeout later
+        # result = await asyncio.wait_for(adhoc_job, timeout=duration)
+        print(f'正常结束，继续保持{duration}分钟')
+        await asyncio.sleep(duration)
+        # 准备复位
+        print(f'已保持{duration}分钟，准备复位')
+
+        action_obj= convert_dev_addr(devices,data.get('house_code'), 0)
+        print('action obj: ',action_obj)
+        await run_adhoc(request, action_obj, data.get('house_code'))
+        print(f'复位完成')
+    except asyncio.TimeoutError:
+        print(f"【超时错误】: 任务执行超过了设定的 {duration} 分钟限制，已被强制终止！")
+        # print(f"任务是否被取消: {adhoc_job.cancelled()}")
+    except Exception as e:
+        print(f'adhoc job异常:{e}')
+
+
+async def check_condition():
+    pass
+    # asyncio.sleep(duration)
+
+@router.post("/api/venti/adhoc/stop")
+async def venti_adhoc_stop(request: Request, data: dict):
     devices = data.get('devices')
-    convert_dev_addr(devices,data.get('house_code'))
-    print(devices)
+    # duration= data.get('duration')
+    action_obj= convert_dev_addr(devices,data.get('house_code'), 0)
+    print(action_obj)
+    try:
+        # todo: 这里不会超时，remove timeout later
+        # result = await asyncio.wait_for(adhoc_job, timeout=duration)
+        # print(f'正常结束，继续保持{duration}分钟')
+        # asyncio.sleep(duration)
+        await asyncio.create_task(run_adhoc(request, action_obj, data.get('house_code')))
+    except Exception as e:
+        print(e)
+
+async def run_adhoc(request, action_obj, house_code):
+    house_index = int(house_code) -1
+    plc_client = request.app.state.plc_conns[house_index]
+    for key, value in action_obj.items():
+        await request.app.state.write_single_reg(plc_client, int(key), value)
 
 
+async def stop_adhoc(request, action_obj, house_code):
+    house_index = int(house_code) -1
+    plc_client = request.app.state.plc_conns[house_index]
+    for key, value in action_obj.items():
+        await request.app.state.write_single_reg(plc_client, int(key), value)
+   
 
-def convert_dev_addr(devices, house_code):
+#  flag 1: start job, 0: stop job
+def convert_dev_addr(devices, house_code, flag):
     # {
     # 'windows': [1, 4], 'dampers': [], 'exhaustFans': [], 'airConditioners': [], 
     # 'blowers': {'1': None, '2': 1, '3': None, '4': None, '5': None, '6': None, '7': 1, '8': None}
     # }
-    converted={}
-    # if devices['dampers']:
-    #     for id in devices['windows']:
-    #         pass
-    silo= load_silo_config(house_code)
-    actions={}
-    blowers=devices['blowers']
-    filtered_blowers = {key + offset - 1: value for key, value in blowers.items() if value is not None}
+    silo_addrs= load_silo_addrs(house_code)
+    print('devices: ',devices)
+    print('silo in convert_dev_addr:', silo_addrs)
+    blowers = devices['blowers']
+    blower_offset= silo_addrs['blowers'][0]
+    action_val=1
+    if not flag:
+        action_val=3
+    filtered_blowers = {int(key) + blower_offset - 1: action_val for key, value in blowers.items() if value is not None}
+    print(f'filtered_blowers {filtered_blowers}')
+    filtered_dict={}
+    # devices.pop("blowers", None) 
+    print(f'left devices {devices}')
+
     for key, value in devices.items():
         print(f"键: {key} -> 值: {value}")
+        if key=='blowers':
+            continue
         addrs=devices[key]
-        offset=silo[key][0]
-        # real_addrs = [addr + offset - 1 for addr in addrs]
-        # for addr in addrs:
-        if key !='blowers':
-            # actions[]
-            
-        # else:
-            filtered_dict = {num + offset - 1: 1 for num in addrs}
-
+        offset=silo_addrs[key][0]
+        if flag:
+            action_val=1
+        elif key=='exhaustFans':
+            action_val=3
+        else:
+            action_val=2
+        filtered_dict =filtered_dict| {num + offset - 1: action_val for num in addrs}
     merged_dict = filtered_blowers | filtered_dict
-
+    return merged_dict
             
 
-def load_silo_config(house_code):
+def load_silo_addrs(house_code):
     config_data=load_config()
     config_data=settings.granaries
     
@@ -419,7 +512,7 @@ def load_silo_config(house_code):
     # for silo in granaries:
     #     if (int)(silo['code'])==house_code:
     #         return silo['devices_addr']
-    return granaries[house_index]
+    return granaries[house_index]['devices_addr']
 
 
 # 报警确认

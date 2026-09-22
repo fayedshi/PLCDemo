@@ -43,6 +43,10 @@ granaries:
       humid:
         - 175
         - 314
+      ext-temp:
+        - 361
+      ext-humid:
+        - 362
       window-state:
         - 365
         - 374
@@ -73,6 +77,8 @@ granaries:
       temp:
         - 35
         - 174
+      ext-temp:
+        - 361
       humid:
         - 175
         - 314

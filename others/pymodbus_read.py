@@ -2,7 +2,7 @@ from pymodbus.client import ModbusTcpClient
 
 def read_plc():
 
-    client = ModbusTcpClient('192.168.0.20', port=503)
+    client = ModbusTcpClient('192.168.0.20', port=502)
     client.connect()
 
     # 使用 unit 替代 slave

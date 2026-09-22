@@ -2,7 +2,7 @@ import random
 import asyncio
 
 async def gen():
-    for i in range(20):
+    for i in range(3):
         nums=[round(random.uniform(20.0, 35.0), 1),
             round(random.uniform(4.0, 6.0), 2)     
         ]
@@ -22,7 +22,7 @@ async def test():
     # yield
     
     try:
-        result = await asyncio.wait_for(task1, timeout=3.0)
+        result = await asyncio.wait_for(task1, timeout=5.0)
     except asyncio.TimeoutError:
         print("【超时错误】: 任务执行超过了设定的 2 秒限制，已被强制终止！")
         print(f"任务是否被取消: {task1.cancelled()}") 
