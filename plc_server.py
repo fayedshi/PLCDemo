@@ -308,7 +308,7 @@ async def check_temp_alarm(event_type, house_code,index):
         # if app.state.num_ticks[index] % app.state.read_alarm_interval[index]:
         #     return
         curr_max_temp = round(max(app.state.global_plc_cache[index])/10,1)
-        # logger.info(f'current max temperature: {curr_max_temp}, limit: {app.state.TEMP_UPPER_LIMIT_LIST[index]}')
+        logger.info(f'current max temperature: {curr_max_temp}, limit: {app.state.TEMP_UPPER_LIMIT_LIST[index]}')
         if curr_max_temp >= app.state.TEMP_UPPER_LIMIT_LIST[index]:
             #  已经存在的话，就不去更新，保留第一条alarm
             # if temp_key not in app.state.active_alarms or not app.state.active_alarms[temp_key]:
@@ -365,7 +365,7 @@ async def save_to_history_db(alarm_data: dict):
             # 3. 将校验通过的数据转化为 SQLAlchemy 的模型实例
             # model_dump() 会把 Pydantic 对象变回 Python 字典（老版本 Pydantic 请用 .dict()）
             db_alarm = AlarmLog(**validated_data.model_dump())
-            logger.info('db_alarm',db_alarm)
+            logger.info(f'db_alarm: {db_alarm}')
             # 4. 执行插入并提交
             session.add(db_alarm)
             await session.commit()
