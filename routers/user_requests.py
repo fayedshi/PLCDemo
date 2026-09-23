@@ -406,11 +406,12 @@ async def run_job(request: Request, data: dict):
                 return False
         # 准备复位
         print(f'已保持{duration}分钟，准备复位')
-        await stop_job(request, data)
+
+        # await stop_job(request, data)
         # action_obj= convert_dev_addr(devices,house_code, 0)
         # print(f'restore action obj: ,{action_obj}')
         # await execute_commands(request, action_obj, house_code)
-        print(f'复位完成')
+        
     # except asyncio.TimeoutError:
     #     print(f"【超时错误】: 任务执行超过了设定的 {duration} 分钟限制，已被强制终止！")
     #     # print(f"任务是否被取消: {adhoc_job.cancelled()}")
@@ -454,15 +455,19 @@ async def venti_sched_start(request: Request, data: dict):
 
     try:     
         is_proceed= await asyncio.wait_for(run_job(request, data), data.get('duration'))
-        if not is_proceed:
-            stop_job(request, data)
+        # if not is_proceed:
+        #     stop_job(request, data)
         # todo: update record status as completed 
     except asyncio.TimeoutError:
+        is_timeout=True
         print(f"【Job执行超时错误】: 作业运行超过了设定的 {data.get('duration')} 分钟限制，已被强制终止！")
         # todo: update record status as running timeout
     except Exception as e:
         print(f'Schedule job异常:{e}')
-
+    finally:
+        if (not is_proceed) or is_timeout:
+            await stop_job(request, data)
+            return    
 
 # 0: ConditionUpperSilo,#   1: ConditionAccumulatedHeat,#   2: ConditionWholeSilo,
 async def check_start_condition(request, mode, start_cond, end_cond, house_code):
