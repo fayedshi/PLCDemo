@@ -13,6 +13,9 @@ INFLUX_DB:
   URL: http://localhost:8181
   TOKEN: apiv3_ntcKjOE7rToG5Z9tcxJ9XQj1_8Bm-ANFgIECpNtyhPeBuSJstAglB_pF1awNFt9oUcCZL4Og9kwd3wnMDG29gQ
 
+#todo: max 24 hours?
+SCHED_MAX_WAIT: 30
+
 granaries:
   - code: '001'
     PLC_IP: 192.168.0.20

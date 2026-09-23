@@ -10,7 +10,7 @@ from config import settings
 from log.plc_logger import get_logger
 from models import AlarmLog
 from schemas import AlarmLogCreate
-from util import  build_influx_line_protocol, registers_to_val
+from util import  build_influx_line_protocol, get_reg_start_addr, registers_to_val
 from datetime import datetime
 from database import AsyncSessionLocal, Base, engine
 from routers.user_requests import router as user_request_router
@@ -62,19 +62,28 @@ async def lifespan(app: FastAPI):
     
     app.state.num_ticks = [1] * silos_cnt
     app.state.dev_addrs_objects=[]
+
+    # temp
     app.state.global_plc_cache = [[] for _ in range(silos_cnt)]
     app.state.global_display_temp_cache = [[] for _ in range(silos_cnt)]
 
+    # humid and power
     app.state.global_humid_cache=[[] for _ in range(silos_cnt)]
     app.state.global_power_cache=[[] for _ in range(silos_cnt)] 
+
+    # external_temp
+    app.state.external_temp=[None] * silos_cnt
     # intitialize limit array with max_temp as 100 degree
     app.state.TEMP_UPPER_LIMIT_LIST = [100] * silos_cnt
+
+    #  jobs
+    app.state.is_job_cancelled=[False] * silos_cnt
 
     # alarms
     app.state.active_alarms={}
     app.state.partial_read=partial_read
     app.state.write_single_reg=write_single_reg
-    # app.state.check_temp_alarm=check_temp_alarm
+
 
     app.state.influx_db_url=config_data["INFLUX_DB"]['URL']
     app.state.influx_token=config_data["INFLUX_DB"]["TOKEN"]
@@ -138,21 +147,32 @@ async def lifespan(app: FastAPI):
             temp_start=gran['devices_addr']['temp']
             # polling_job = asyncio.create_task(plc_polling_task(index, plc_client, gran['code']))
             task_check_plc_connection=asyncio.create_task(check_plc_connection(index, plc_client, gran['code']))
-
             task_read_temp=asyncio.create_task(read_temp(index, plc_client, gran['code']))
             task_check_alarm =asyncio.create_task(check_temp_alarm('TEMP_HIGH', gran['code'], index))
-            # task_store_temp=asyncio.create_task(store_temp(index, gran['code']))
+            task_store_temp=asyncio.create_task(store_temp(index, gran['code']))
 
-            # task_read_humid=asyncio.create_task(read_humid(index, plc_client, gran['code']))
-            # task_store_humid=asyncio.create_task(store_humid(index, gran['code']))
+            task_read_humid=asyncio.create_task(read_humid(index, plc_client, gran['code']))
+            task_store_humid=asyncio.create_task(store_humid(index, gran['code']))
             
-            # task_read_power=asyncio.create_task(read_power(index, plc_client, gran['code']))
-            # task_store_power=asyncio.create_task(store_power(index, gran['code']))
+            task_read_power=asyncio.create_task(read_power(index, plc_client, gran['code']))
+            task_store_power=asyncio.create_task(store_power(index, gran['code']))
+
+            # polling_tasks.append(asyncio.create_task(read_temp(index, plc_client, gran['code'])))
+            # polling_tasks.append(asyncio.create_task(check_temp_alarm('TEMP_HIGH', gran['code'], index)))
+            # polling_tasks.append(asyncio.create_task(store_temp(index, gran['code'])))
+        
+            # polling_tasks.append(asyncio.create_task(read_humid(index, plc_client, gran['code'])))
+            # polling_tasks.extend(asyncio.create_task(store_humid(index, gran['code'])))
+                                 
+            # polling_tasks.append(asyncio.create_task(read_power(index, plc_client, gran['code'])))
+            # polling_tasks.append(asyncio.create_task(store_power(index, gran['code'])))
 
             polling_tasks.extend([task_check_plc_connection, task_read_temp, task_check_alarm, 
-                                #   task_store_temp ,
-                                #   task_read_humid, task_store_humid, 
-                                #     task_read_power, task_store_power
+                                  task_store_temp ,
+                                  task_read_humid, 
+                                task_store_humid, 
+                                    task_read_power, 
+                                task_store_power
                                     ]) 
         yield
 
@@ -308,7 +328,7 @@ async def check_temp_alarm(event_type, house_code,index):
         # if app.state.num_ticks[index] % app.state.read_alarm_interval[index]:
         #     return
         curr_max_temp = round(max(app.state.global_plc_cache[index])/10,1)
-        logger.info(f'current max temperature: {curr_max_temp}, limit: {app.state.TEMP_UPPER_LIMIT_LIST[index]}')
+        # logger.info(f'current max temperature: {curr_max_temp}, limit: {app.state.TEMP_UPPER_LIMIT_LIST[index]}')
         if curr_max_temp >= app.state.TEMP_UPPER_LIMIT_LIST[index]:
             #  已经存在的话，就不去更新，保留第一条alarm
             # if temp_key not in app.state.active_alarms or not app.state.active_alarms[temp_key]:
@@ -432,23 +452,26 @@ async def read_temp(index, plc_client, house_code):
             temp_data.extend(await partial_read(plc_client,155,20))
             # 临时加入，检查异常值，可能不需要
             # temp_data= await read_temp_data(temp_start, plc_client)
-            # todo: 读取室外温度
-            ext_temp_addr =granaries[index]['devices_addr']['ext-temp'][0]
             
-            external_temp=await partial_read(plc_client,ext_temp_addr,1)
+            # todo: 读取室外温度
+            # ext_temp_addr =granaries[index]['devices_addr']['ext-temp'][0]
+            ext_temp_addr = get_reg_start_addr(granaries[index],'ext-temp')
+            external_temp =await partial_read(plc_client,ext_temp_addr,1)
+            logger.info(f'ext_temp_addr: {ext_temp_addr} , external_temp:{external_temp}')
 
             res =  check_cache_val(temp_data)
             if not res:
                 logger.info(f"*****************PLC内部异常 in poll_and_store_temp: ，等待1分钟")
-                app.state.global_plc_cache[index]=[]
+                # app.state.global_plc_cache[index]=[]
                 await asyncio.sleep(60)
                 return
+            app.state.external_temp[index]=round(external_temp[0]/10,1)
             app.state.global_plc_cache[index] = temp_data
             temp_data = [round(x / 10, 1) for x in temp_data]
             app.state.global_display_temp_cache[index] = temp_data
             # format_display_temp(index,temp_data), 
         except Exception as e:
-            logger.info(f'############## poll_and_store_temp in house-{house_code}发生异常: {e}, {datetime.now()}')
+            logger.info(f'############## read_temp in house-{house_code}发生异常: {e}, {datetime.now()}')
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 
@@ -522,7 +545,7 @@ async def read_humid(index, plc_client, house_code):
             humid_cache.extend(await partial_read(plc_client,195,20))
             if not check_cache_val(humid_cache):
                 logger.info(f"*****************PLC内部异常 in poll_and_store_humid: ，等待1分钟")
-                app.state.global_humid_cache[index]=[]
+                # app.state.global_humid_cache[index]=[]
                 await asyncio.sleep(60)
                 return
             app.state.global_humid_cache[index] = humid_cache
@@ -607,7 +630,7 @@ async def prep_store_data_cache(data_cache, house_code, table, field_prefix):
             tags = device_tags, 
             fields=plc_channels
         )
-        logger.info(f'拼接后的字符串 for 仓房-{house_code}: {influx_data_line}')
+        # logger.info(f'拼接后的字符串 for 仓房-{house_code}: {influx_data_line}')
         await send_to_influx(influx_data_line)
         
     except Exception as e:

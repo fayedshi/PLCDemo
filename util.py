@@ -59,3 +59,8 @@ def registers_to_val(reg_high, reg_low, flag):
     # 将这 4 字节数据按照大端序解包为 32 双整形(f)
     dint_val = struct.unpack(f">{flag}", raw_bytes)[0]
     return dint_val
+
+
+def get_reg_start_addr(silo, dev_name):
+    # ext_temp_addr =granaries[index]['devices_addr']['ext-temp'][0]
+    return silo['devices_addr'][dev_name][0]

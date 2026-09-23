@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     def granaries(self) -> list:
         return _raw_config.get("granaries", [])
 
+    @property
+    def sched_max_wait(self) -> int:
+            return _raw_config.get("SCHED_MAX_WAIT", 300)
     # @property
     # def debug(self) -> bool:
     #     return self._config.get("app", {}).get("debug", False)
