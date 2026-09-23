@@ -381,6 +381,7 @@ async def venti_adhoc_start(request: Request, data: dict):
     run_job(request, data)
 
 
+# 0: completed normally, 1: cancelled, 2: timeout, 3: terminated abnormally
 async def run_job(request: Request, data: dict):
     try:
         devices = data.get('devices')
