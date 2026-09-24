@@ -56,3 +56,22 @@ class VentilationMode(Base):
 
     def __repr__(self) -> str:
         return f"<VentilationMode(name={self.name!r}, start_temp_diff={self.start_temp_diff})>"
+
+# 2. 定义通风模式模型
+class VentiTask(Base):
+    __tablename__ = "ventilation_jobs"
+
+    # 主键 ID
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    
+    # 模式名称（不允许为空，且唯 一） 
+    house_code: Mapped[str] = mapped_column(String(10), nullable=False,  comment="仓房代码")
+    mode_id: Mapped[int] = mapped_column(Integer, nullable=True, comment="模式ID")
+    mode_name: Mapped[str] = mapped_column(String(50), nullable=True, comment="模式名称")
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False, comment="状态代码")
+    status_text: Mapped[str] = mapped_column(String(50), nullable=False, comment="状态信息")
+    create_time= Column(DateTime, nullable=True)
+    update_time= Column(DateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<VentiTask(name={self.mode_name!r}, status_code={self.status_code})>"

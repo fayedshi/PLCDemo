@@ -7,7 +7,7 @@ from pymodbus.client import AsyncModbusTcpClient
 from contextlib import asynccontextmanager
 import httpx
 from config import settings
-from log.plc_logger import get_logger
+from log.plc_logger import logger
 from models import AlarmLog
 from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, get_reg_start_addr, registers_to_val
@@ -45,7 +45,7 @@ GLOBAL_STORE_INTERVAL=300
 
 plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
-logger=None
+# logger=None
 config_data=settings.raw_config
 # granaries = config_data.get('granaries', [])
 granaries= settings.granaries
@@ -53,8 +53,8 @@ silos_cnt=len(granaries)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global logger
-    logger=get_logger()
+    # global logger
+    # logger=get_logger()
 
     # app.state.plc_ip= os.getenv("PLC_IP", "127.0.0.1")
     # app.state.plc_port=os.getenv("PLC_PORT")

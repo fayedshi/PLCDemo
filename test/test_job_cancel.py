@@ -5,12 +5,13 @@ import asyncio
 async def gen():
     flag=False
     try:
-        for i in range(100):
+        for i in range(3):
             nums=[round(random.uniform(20.0, 35.0), 1),
                 round(random.uniform(4.0, 6.0), 2)     
             ]
             await asyncio.sleep(1)
             print(f'i:{i}, nums: {nums}')
+        print('gen finish in normal')
         flag=True
     except asyncio.CancelledError:
         flag=False
@@ -37,7 +38,7 @@ async def check(task, duration):
 async def test():
     
     task1=asyncio.create_task(gen())
-    task2=asyncio.create_task(check(task1, 12))
+    task2=asyncio.create_task(check(task1, 10))
     tasks=[]
     tasks.extend([task1,task2])
     results = await asyncio.gather(*tasks)

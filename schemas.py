@@ -102,7 +102,38 @@ class VentilationModePageResult(BaseModel):
         from_attributes = True  # Pydantic v1 写法（v2 请改为 from_attributes = True）
 
 
+# 1. 基础模型（定义通用和核心的业务字段）
+class VentiTaskBase(BaseModel):
+    # max_length=50 严格对应 String(50) 的长度校验
+    house_code: str= Field(..., max_length=10, description="仓房代码")
+    mode_id: Optional[int] = Field(..., description="模式ID")
+    mode_name: Optional[str] = Field(..., max_length=50, description="模式名称")
+    status_code: int = Field(..., description="状态代码")
+    status_text: str = Field(..., max_length=50, description="状态信息")
 
+# 2. 创建模型（用于前端 POST 请求创建任务，通常由自增主键和时间，不需要前端传）
+class VentiTaskCreate(VentiTaskBase):
+    create_time: Optional[datetime] = Field(None, description="创建时间")
+    
+
+# 3. 更新模型（用于前端 PUT/PATCH 请求修改任务，所有字段变为可选）
+class VentiTaskUpdate(BaseModel):
+    mode_name: Optional[str] = Field(None, max_length=50, description="模式名称")
+    status_code: Optional[int] = Field(None, description="状态代码")
+    status_text: Optional[str] = Field(None, max_length=50, description="状态信息")
+    update_time: Optional[datetime] = Field(None, description="更新时间")
+
+# 4. 响应模型（用于后端返回给前端，包含数据库自动生成的 id、时间等完整数据）
+class VentiTaskResponse(VentiTaskBase):
+    id: int = Field(..., description="主键 ID")
+    # nullable=True 对应 Optional[datetime] = None
+    create_time: Optional[datetime] = Field(None, description="创建时间")
+    update_time: Optional[datetime] = Field(None, description="更新时间")
+
+    # 🚀 核心关键：开启从 ORM 属性中直接加载的功能（Pydantic v2 标准）
+    model_config = {
+        "from_attributes": True
+    }
 
 
         

@@ -2,21 +2,27 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Query, Request,WebSocket
 import statistics
-import asyncio 
+import asyncio
+
+from sqlalchemy import select 
 from config import settings
 from config_loader import load_config
 from influxdb_client_3 import InfluxDBClient3
 import numpy as np
 import pandas as pd
 
+from database import AsyncSessionLocal
 from date_util import to_utctime
-from schemas import AlarmLogResponse
+from models import VentiTask
+from schemas import AlarmLogResponse, VentiTaskBase, VentiTaskCreate, VentiTaskResponse, VentiTaskUpdate
 from services.alarm_service import AlarmService
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 
+from util import get_reg_start_addr
+# from log.plc_logger import logger
 
 
 router = APIRouter(tags=["web请求模块"])
@@ -126,15 +132,18 @@ async def get_history_alarms(
         )
 
 # todo: add house code
-@router.websocket("/ws/dev-state")
+@router.websocket("/ws/dev-state/{house_code}")
 async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
     # global dev_state_cache
     await websocket.accept()
     print("【后端提示】发现/ws/dev-state前端客户端已连接！")
     try:
         house_index = int(house_code) -1
-        house_config= load_silo_addrs(house_code) 
-        dev_start= house_config['devices_addr']['window-state'][0]
+        # house_config= load_silo_addrs(house_code) 
+        # dev_start= house_config['devices_addr']['window-state'][0]
+
+        dev_start= get_reg_start_addr(settings.granaries[house_index],'window-state')
+        print(f'dev_start: {dev_start}')
         plc_client=websocket.app.state.plc_conns[house_index]
         while True:
             read_plc_func=websocket.app.state.partial_read
@@ -143,7 +152,7 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
             # send to vue every 2 sec
             await asyncio.sleep(1)
     except Exception as e:
-        print(f"ws/dev-state客户端断开连接 : {e}")
+        print(f"ws/dev-state house-{house_code}客户端断开连接 : {e}")
 
 
 
@@ -361,9 +370,11 @@ async def control_window(request: Request, data: dict):
     dev_id=data.get('dev_id')
     print(f'准备写入设备id {dev_id} , action_type: {action_type}')
     try:
+        house_index = int(data.get('house_code')) -1
+        plc_client=request.app.state.plc_conns[house_index]
         if dev_id:
             dev_info = dev_id.split('-')
-            await request.app.state.write_single_reg(int(dev_info[1]), action_type)
+            await request.app.state.write_single_reg(plc_client,int(dev_info[1]), action_type)
             print(f'写入PLC成功，设备id {dev_id}，动作 {action_type}')
         else:
             # batch devices
@@ -375,10 +386,42 @@ async def control_window(request: Request, data: dict):
     return {"success": True}
 
 
-# 启动的action值，默认为1，都是开窗或启动
+# 启动的action值，默认为1，都是开窗或启动# normal finish or cancelled
 @router.post("/api/venti/adhoc/start")
 async def venti_adhoc_start(request: Request, data: dict):
-    run_job(request, data)
+    # init job status before any actions
+    print('here in adhoc start')
+    try:
+        venti_task_id=0
+        house_index = int(data.get('house_code')) -1
+        request.app.state.is_job_cancelled[house_index] =False
+        task_data={
+            'house_code': data.get('house_code'), 
+            'mode_name': None,  
+            'mode_id': data.get('mode_id'), 
+            'status_code': 0,
+            'status_text': '运行中',
+            'create_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+        venti_task_id = await persist_venti_task(task_data)
+        print(f'已新增记录 venti_task_id: {venti_task_id}')
+        flag = await run_job(request, data)
+        if flag==0:
+            task_data['status_code'] = 1
+            task_data['status_text'] = '正常结束'
+            print(f"已保持{data.get('duration')}分钟，准备复位")
+        else:
+            task_data['status_code'] = 4
+            task_data['status_text'] = '被取消'
+    except Exception as e:
+        task_data['status_code'] = 5
+        task_data['status_text'] = '异常中止'
+    finally:
+        print('&&&why in finally')
+        task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        await update_venti_task(venti_task_id, task_data)
+        await stop_job(request, data)
+        request.app.state.is_job_cancelled[house_index]= False
 
 
 # 0: completed normally, 1: cancelled, 2: timeout, 3: terminated abnormally
@@ -390,23 +433,25 @@ async def run_job(request: Request, data: dict):
         action_obj= convert_dev_addr(devices, house_code, 1)
         print(f'start action obj: {action_obj}')
         await execute_commands(request, action_obj, house_code)
+        print(f'执行开启命令完毕，先睡眠5s')
+        await asyncio.sleep(5)
         
-        print(f'执行命令完毕，继续保持{duration}分钟')
         elapsed=0
         house_index = int(house_code) -1
         # sleep minor amount of time
         while True:
             if elapsed < duration:
+                print(f'in run_job，继续睡眠5s')
                 await asyncio.sleep(5)
                 elapsed += 5
             else:
-                break
+                return 0
             if request.app.state.is_job_cancelled[house_index]:
                 print(f"仓房{data.get('house_code')}作业被中止")
                 # todo: update job record status as terminated
-                return False
+                return 1
         # 准备复位
-        print(f'已保持{duration}分钟，准备复位')
+        
 
         # await stop_job(request, data)
         # action_obj= convert_dev_addr(devices,house_code, 0)
@@ -416,9 +461,12 @@ async def run_job(request: Request, data: dict):
     # except asyncio.TimeoutError:
     #     print(f"【超时错误】: 任务执行超过了设定的 {duration} 分钟限制，已被强制终止！")
     #     # print(f"任务是否被取消: {adhoc_job.cancelled()}")
+    except asyncio.CancelledError:
+        print('run_job() cancelled')
     except Exception as e:
         print(f'run_job异常:{e}')
         raise e
+        
 
 # restore devices
 async def stop_job(request: Request, data: dict):
@@ -431,92 +479,297 @@ async def stop_job(request: Request, data: dict):
     except Exception as e:
         print(e)
         raise e
-    
+
+async def persist_venti_task(task_data: dict):
+    # 1. 使用 Pydantic 进行第一轮严格的数据校验和清洗
+    try:
+        validated_data = VentiTaskCreate(**task_data)
+    except Exception as e:
+        print(f"❌ 报警数据格式校验失败: {e}")
+        return
+
+    # 2. 数据库会话上下文管 理
+    async with AsyncSessionLocal() as session:
+        try:
+            print('in AsyncSessionLocal: ',AsyncSessionLocal)
+            # 3. 将校验通过的数据转化为 SQLAlche0my 的模型实例
+            # model_dump() 会把 Pydantic 对象变回 Python 字典（老版本 Pydantic 请用 .dict()）
+            db_venti_task = VentiTask(**validated_data.model_dump())
+            print(f'db_venti_task: {db_venti_task}')
+            # 4. 执行插入并提交
+            session.add(db_venti_task)
+            await session.commit()
+            print(f"💾 venti task已成功持久化到MySQL，自增 ID: {db_venti_task.id}")
+            return db_venti_task.id
+        except Exception as e:
+            await session.rollback()
+            print(f"❌ venti task入库失败，已自动回滚: {e}")
+
+
+
+async def update_venti_task(task_id: int, task_data: dict):
+    """
+    更新通风作业的异步方法
+    :param task_id: 需要更新的作业主键 ID
+    :param task_data: 前端传过来的修改字段字典 (例如: {"status_code": 2, "status_text": "运行中"})
+    """
+    # 1. 使用 Pydantic 进行第一轮严格的数据校验和清洗
+    try:
+        # 🚀 关键点：使用 VentiTaskUpdate 模型，它里面所有的字段都是 Optional 的
+        validated_data = VentiTaskUpdate(**task_data)
+    except Exception as e:
+        print(f"❌ 更新数据格式校验失败: {e}")
+        return False
+
+    # 2. 数据库会话上下文管理
+    async with AsyncSessionLocal() as session:
+        try:
+            print(f'in AsyncSessionLocal: {AsyncSessionLocal}')
+            
+            # 3. 🚀 关键步骤：先去数据库里查出这条已经存在的数据
+            result = await session.execute(select(VentiTask).where(VentiTask.id == task_id))
+            db_venti_task = result.scalars().first()
+            
+            if not db_venti_task:
+                print(f"⚠️ 未找到 ID 为 {task_id} 的通风作业，无法执行更新")
+                return False
+
+            # 4. 🚀 关键步骤：提取通过校验的数据字典
+            # exclude_unset=True 的作用是：前端传了什么字段就只提取什么字段，
+            # 没传的字段不会包含在内（防止把数据库里的旧数据误改成了 None）
+            update_dict = validated_data.model_dump(exclude_unset=True)
+            
+            # 5. 动态将新值赋给查出来的 SQLAlchemy 模型对象
+            for key, value in update_dict.items():
+                setattr(db_venti_task, key, value)
+                
+            # 手动更新你的 update_time 字段（如果你的数据库没有设置 onupdate 自动更新的话）
+            # db_venti_task.update_time = datetime.now()
+
+            # 6. 执行提交
+            await session.commit()
+            print(f"💾 venti task [ID: {task_id}] 已成功更新到 MySQL")
+            return True
+            
+        except Exception as e:
+            await session.rollback()
+            print(f"❌ venti task 更新失败，已自动回滚: {e}")
+            return False
+
+async def get_running_venti_tasks(house_code) -> List[VentiTaskResponse]:
+    async with AsyncSessionLocal() as session:
+        try:
+            # 1. 构建查询语句：SELECT * FROM ventilation_jobs WHERE status_code = 5
+            # 如果想按时间倒序排列，可以加上 .order_by(VentiTask.create_time.desc())
+            stmt = select(VentiTask).where(VentiTask.status_code.in_ ([-1, 0]), VentiTask.house_code == house_code)
+            # 2. 异步执行查询
+            result = await session.execute(stmt)
+            # 3. 提取所有的 ORM 对象模型
+            db_tasks = result.scalars().all()
+            # 4. 利用 Pydantic 将 ORM 对象列表批量转换为响应模型列表
+            
+            # model_validate 配合列表推导式非常优雅且安全
+            return [VentiTaskResponse.model_validate(task) for task in db_tasks]
+            # return db_tasks
+            
+        except Exception as e:
+            print(f"❌ 查询任务列表失败: {e}")
+            return []
+
+
 # 智能作业
+#  任务状态： 等待触发（-1），运行中(0)，结束(1，正常完成 2，等待触发超时，3，等待结束超时， 4，cancelled  5，异常中止)
 @router.post("/api/venti/sched/start")
 async def venti_sched_start(request: Request, data: dict):
     try:
+        house_index = int(data.get('house_code')) -1
+        request.app.state.is_job_cancelled[house_index] =False
+        # 检查开始条件
+        print('开始智能作业')
         is_timeout=False
-        is_proceed=False
+        ret=False
+        
         #todo: create a task record with status 等待触发
-        check_condition_task= asyncio.create_task(
-            check_start_condition(request, data.get('mode'), data.get('start_condition'), data.get('end_condition'), data.get('house_code')))
-        is_proceed = await asyncio.wait_for(check_condition_task, settings.sched_max_wait)
-        if not is_proceed:
+        task_data={
+            'mode_name': data.get('mode_name'), 
+            'status_code': -1 ,
+            'status_text': '等待触发',
+            'create_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+        venti_task_id=await persist_venti_task(task_data)
+        check_start_condition_task= asyncio.create_task(check_condition(request, data, 0,  None))
+        ret = await asyncio.wait_for(check_start_condition_task, settings.sched_max_wait)
+        print(f"ret {ret}")
+        if ret==1:
             print("等待中被人为中止，作业结束")
+            task_data['status_code'] = 4
+            task_data['status_text'] = '被取消'
+            task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         # 条件满足，开始执行job
     except asyncio.TimeoutError:
         print(f"【等待触发超时错误】: 任务等待触发超过了设定的 {settings.sched_max_wait} 分钟限制，已被强制终止！")
-        is_timeout=True
             # todo: update record status as waiting timeout
+        task_data['status_code'] = 2
+        task_data['status_text'] = '等待触发超时'
+        task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ret=2
     finally:
-        if (not is_proceed) or is_timeout:
+        if ret:
             await stop_job(request, data)
+            print(f"reset is_job_cancelled for house-{house_index}")
+            request.app.state.is_job_cancelled[house_index]=False
+            await update_venti_task(venti_task_id, task_data)
             return
+        
+    # todo: 需要开启设备
+    # 检查结束条件
+    try:
+        #todo: create a task record with status running
+        print('检查结束条件')
+        task_run_job= asyncio.create_task(run_job(request, data))
+        check_end_condition_task =asyncio.create_task(check_condition(request, data, 1, task_run_job))
 
-    try:     
-        is_proceed= await asyncio.wait_for(run_job(request, data), data.get('duration'))
-        # if not is_proceed:
-        #     stop_job(request, data)
-        # todo: update record status as completed 
+        task_data['status_code'] = 0
+        task_data['status_text'] = '运行中'
+        task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        await update_venti_task(venti_task_id, task_data)
+
+        results = await asyncio.gather(task_run_job, check_end_condition_task, return_exceptions=True)
+        if results[1]==0:
+            #todo: create a task record with status completed
+            task_data['status_code'] = 1
+            task_data['status_text'] = '正常结束'
+            task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            pass
+        elif results[1]==1:
+            #todo: create a task record with status cancelled
+            task_data['status_code'] = 4
+            task_data['status_text'] = '被取消'
+            task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            pass
+        elif results[1]==2:
+            # timeout
+            print(f"【Job执行超时错误】: 作业运行超过了设定的 {data.get('duration')} 分钟限制，已被强制终止！")
+            task_data['status_code'] = 3
+            task_data['status_text'] =  '等待结束超时'
+            task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            #todo: create a task record with status exception
+            task_data['status_code'] = 5
+            task_data['status_text'] = '异常中止'
+            task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     except asyncio.TimeoutError:
         is_timeout=True
         print(f"【Job执行超时错误】: 作业运行超过了设定的 {data.get('duration')} 分钟限制，已被强制终止！")
         # todo: update record status as running timeout
     except Exception as e:
+        #todo: create a task record with status exception
         print(f'Schedule job异常:{e}')
     finally:
-        if (not is_proceed) or is_timeout:
-            await stop_job(request, data)
-            return    
+        await stop_job(request, data)
+        await update_venti_task(venti_task_id, task_data)
+        request.app.state.is_job_cancelled[house_index]=False
+                
 
+
+#  0: normal finish, 1: timed out
+# async def check(task, duration):
+#     elapsed=0
+#     while True:
+#         num_int = random.randint(1, 100)
+#         print(f'……………………………………………………………… num in check: {num_int}')
+#         elapsed +=3
+#         if elapsed < duration:
+#             await asyncio.sleep(3)
+#         else:
+#             task.cancel()
+#             return 1
+#         if num_int == 34:
+#             task.cancel()
+#             return 0
+        
 # 0: ConditionUpperSilo,#   1: ConditionAccumulatedHeat,#   2: ConditionWholeSilo,
-async def check_start_condition(request, mode, start_cond, end_cond, house_code):
-    house_index = int(house_code) -1
-    if(mode==0):
+# flag 0: start condition, 1: end condition
+# 0: completed normally, 1: cancelled, 2: timeout, 3: terminated abnormally
+async def check_condition(request, data, flag, task_run_job):
+    house_index = int(data.get('house_code')) -1
+    elapsed=0
+    if data.get('mode_id')==0:
+        # start_cond_1=max_internan_humid < data.get('end_condition').get('maxMoisture')
+        # start_cond_2=surface_avg - ext_temp < data.get('end_condition').get('minTotalTempDiff')
         # surface_avg=None
         while True:
+
             sum=0
             for i in range(0, 140, 4):
                 sum += request.app.state.global_display_temp_cache[house_index][i]
             surface_avg= round(sum/35,1)
             ext_temp=request.app.state.external_temp[house_index]
-            temp_diff=start_cond.get('minTotalTempDiff')
+            temp_diff=data.get('start_condition').get('minTotalTempDiff')
+            max_internan_humid= round(max(request.app.state.global_humid_cache[house_index])/10,1)
+
             print(f"当前仓内最大湿度{max(request.app.state.global_humid_cache[house_index])}，\
                   表层平均温度：{surface_avg}， 仓外温度{request.app.state.external_temp[house_index]}, 睡眠30s \
                   diff: {surface_avg - request.app.state.external_temp[house_index]}\
-                  maxMoisture {start_cond.get('maxMoisture')}， \
-                  minTotalTempDiff {start_cond.get('minTotalTempDiff')}"
+                  start_maxMoisture {data.get('start_condition').get('maxMoisture')}， \
+                  start_minTotalTempDiff {data.get('start_condition').get('minTotalTempDiff')}，\
+                  end maxMoisture {data.get('end_condition').get('maxMoisture')}， \
+                  end minTotalTempDiff {data.get('end_condition').get('minTotalTempDiff')}"
                   )
-
-            if max(request.app.state.global_humid_cache[house_index]) >= start_cond.get('maxMoisture')  \
-                and  surface_avg - ext_temp >= temp_diff:
-                print('满足开启条件')
-                return True
+            print(f'flag: {flag}, elsapsed {elapsed}')
+            elapsed += 5
+            if flag==0:
+                if elapsed < settings.sched_max_wait:
+                    await asyncio.sleep(5)
+                else:
+                    print(f"等待开始条件超时，cancel run_job")
+                    # task_run_job.cancel()
+                    return 2
+                if max_internan_humid >= data.get('start_condition').get('maxMoisture')  \
+                    and  surface_avg - ext_temp >= data.get('start_condition').get('minTotalTempDiff'):
+                    print(f"满足开始条件")
+                    return 0
+            else:
+                print(f"condtion 1：  {max_internan_humid < data.get('end_condition').get('maxMoisture')} \
+                      condtion 2： {surface_avg - ext_temp < data.get('end_condition').get('minTotalTempDiff')}")
+                
+                if max_internan_humid < data.get('end_condition').get('maxMoisture')  \
+                    and  surface_avg - ext_temp < data.get('end_condition').get('minTotalTempDiff'):
+                    print('满足结束条件,等待10s后中止')
+                    await asyncio.sleep(10)
+                    task_run_job.cancel()
+                    print('task_run_job cancelled')
+                    return 0
+                if elapsed < data.get('duration'):
+                    print('未满足结束条件，继续睡眠5s')
+                    await asyncio.sleep(5)
+                else:
+                    print(f"等待结束条件超时，cancel run_job")
+                    task_run_job.cancel()
+                    return 2
             if request.app.state.is_job_cancelled[house_index]:
-                return False
-            await asyncio.sleep(5)
-        
+                print('收到中止信号，停止等待结束条件')
+                task_run_job.cancel()
+                return 1
             
 @router.post("/api/venti/job/stop")
 async def venti_adhoc_stop(request: Request, data: dict):
-    # devices = data.get('devices')
-    # # duration= data.get('duration')
-    # action_obj= convert_dev_addr(devices,data.get('house_code'), 0)
-    # print(action_obj)
-    # try:
-    #     # todo: 这里不会超时，remove timeout later
-    #     # result = await asyncio.wait_for(adhoc_job, timeout=duration)
-    #     # print(f'正常结束，继续保持{duration}分钟')
-    #     # asyncio.sleep(duration)
-    #     await asyncio.create_task(execute_commands(request, action_obj, data.get('house_code')))
-    # except Exception as e:
-    #     print(e)
-    # stop_job(request, data)
+    # todo # if running jobs：
+    tasks= await get_running_venti_tasks(data.get('house_code'))
+    print(f'running tasks: {tasks}')
+    if not tasks:
+        print('当前无运行中的作业')
+        # raise Exception('当前无运行中的作业')
+        return
     
+        # update is_job_cancelled[house_index]
+        # sleep 10 secs
+        # restore is_cancelled if db status is not running        
     house_index = int(data.get('house_code')) -1
     request.app.state.is_job_cancelled[house_index] =True
     print(f"house-{data.get('house_code')} 作业停止信号已发出")
+    
 
 async def execute_commands(request, action_obj, house_code):
     house_index = int(house_code) -1
@@ -525,11 +778,11 @@ async def execute_commands(request, action_obj, house_code):
         await request.app.state.write_single_reg(plc_client, int(key), value)
 
 
-async def stop_adhoc(request, action_obj, house_code):
-    house_index = int(house_code) -1
-    plc_client = request.app.state.plc_conns[house_index]
-    for key, value in action_obj.items():
-        await request.app.state.write_single_reg(plc_client, int(key), value)
+# async def stop_adhoc(request, action_obj, house_code):
+#     house_index = int(house_code) -1
+#     plc_client = request.app.state.plc_conns[house_index]
+#     for key, value in action_obj.items():
+#         await request.app.state.write_single_reg(plc_client, int(key), value)
    
 
 #  flag 1: start job, 0: stop job
@@ -554,7 +807,7 @@ def convert_dev_addr(devices, house_code, flag):
     print(f'left devices {devices}')
 
     for key, value in devices.items():
-        print(f"键: {key} -> 值: {value}")
+        # print(f"键: {key} -> 值: {value}")
         if key=='blowers':
             continue
         addrs=devices[key]
