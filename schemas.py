@@ -106,8 +106,9 @@ class VentilationModePageResult(BaseModel):
 class VentiTaskBase(BaseModel):
     # max_length=50 严格对应 String(50) 的长度校验
     house_code: str= Field(..., max_length=10, description="仓房代码")
-    mode_id: Optional[int] = Field(..., description="模式ID")
-    mode_name: Optional[str] = Field(..., max_length=50, description="模式名称")
+    # 可以传None, 不能不传
+    mode_id: Optional[int]
+    mode_name: Optional[str] = Field(max_length=50, description="模式名称")
     status_code: int = Field(..., description="状态代码")
     status_text: str = Field(..., max_length=50, description="状态信息")
 

@@ -404,6 +404,7 @@ async def venti_adhoc_start(request: Request, data: dict):
             'create_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         venti_task_id = await persist_venti_task(task_data)
+        task_data={}
         print(f'已新增记录 venti_task_id: {venti_task_id}')
         flag = await run_job(request, data)
         if flag==0:
@@ -576,7 +577,11 @@ async def get_running_venti_tasks(house_code) -> List[VentiTaskResponse]:
             print(f"❌ 查询任务列表失败: {e}")
             return []
 
-
+@router.get("/api/venti/jobs/{house_code}")
+async def venti_jobs(house_code:str):
+    running_jobs =await get_running_venti_tasks(house_code)
+    return running_jobs
+    
 # 智能作业
 #  任务状态： 等待触发（-1），运行中(0)，结束(1，正常完成 2，等待触发超时，3，等待结束超时， 4，cancelled  5，异常中止)
 @router.post("/api/venti/sched/start")
@@ -597,6 +602,7 @@ async def venti_sched_start(request: Request, data: dict):
             'create_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         venti_task_id=await persist_venti_task(task_data)
+        task_data={}
         check_start_condition_task= asyncio.create_task(check_condition(request, data, 0,  None))
         ret = await asyncio.wait_for(check_start_condition_task, settings.sched_max_wait)
         print(f"ret {ret}")
@@ -604,20 +610,19 @@ async def venti_sched_start(request: Request, data: dict):
             print("等待中被人为中止，作业结束")
             task_data['status_code'] = 4
             task_data['status_text'] = '被取消'
-            task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         # 条件满足，开始执行job
     except asyncio.TimeoutError:
         print(f"【等待触发超时错误】: 任务等待触发超过了设定的 {settings.sched_max_wait} 分钟限制，已被强制终止！")
             # todo: update record status as waiting timeout
         task_data['status_code'] = 2
         task_data['status_text'] = '等待触发超时'
-        task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         ret=2
     finally:
         if ret:
             await stop_job(request, data)
             print(f"reset is_job_cancelled for house-{house_index}")
             request.app.state.is_job_cancelled[house_index]=False
+            task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             await update_venti_task(venti_task_id, task_data)
             return
         
@@ -633,32 +638,24 @@ async def venti_sched_start(request: Request, data: dict):
         task_data['status_text'] = '运行中'
         task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await update_venti_task(venti_task_id, task_data)
-
         results = await asyncio.gather(task_run_job, check_end_condition_task, return_exceptions=True)
         if results[1]==0:
             #todo: create a task record with status completed
             task_data['status_code'] = 1
             task_data['status_text'] = '正常结束'
-            task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            pass
         elif results[1]==1:
             #todo: create a task record with status cancelled
             task_data['status_code'] = 4
             task_data['status_text'] = '被取消'
-            task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            pass
         elif results[1]==2:
             # timeout
             print(f"【Job执行超时错误】: 作业运行超过了设定的 {data.get('duration')} 分钟限制，已被强制终止！")
             task_data['status_code'] = 3
             task_data['status_text'] =  '等待结束超时'
-            task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         else:
             #todo: create a task record with status exception
             task_data['status_code'] = 5
             task_data['status_text'] = '异常中止'
-            task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     except asyncio.TimeoutError:
         is_timeout=True
         print(f"【Job执行超时错误】: 作业运行超过了设定的 {data.get('duration')} 分钟限制，已被强制终止！")
@@ -668,6 +665,7 @@ async def venti_sched_start(request: Request, data: dict):
         print(f'Schedule job异常:{e}')
     finally:
         await stop_job(request, data)
+        task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await update_venti_task(venti_task_id, task_data)
         request.app.state.is_job_cancelled[house_index]=False
                 
