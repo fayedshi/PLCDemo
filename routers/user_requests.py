@@ -393,12 +393,12 @@ async def venti_adhoc_start(request: Request, data: dict):
     print('here in adhoc start')
     try:
         venti_task_id=0
+        flag=False
         house_index = int(data.get('house_code')) -1
-        request.app.state.is_job_cancelled[house_index] =False
         task_data={
             'house_code': data.get('house_code'), 
             'mode_name': None,  
-            'mode_id': data.get('mode_id'), 
+            'mode_id': -1, 
             'status_code': 0,
             'status_text': '运行中',
             'create_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -406,7 +406,10 @@ async def venti_adhoc_start(request: Request, data: dict):
         venti_task_id = await persist_venti_task(task_data)
         task_data={}
         print(f'已新增记录 venti_task_id: {venti_task_id}')
+        # init job cancel flag to false at job start
+        request.app.state.is_job_cancelled[house_index] =False
         flag = await run_job(request, data)
+        print(f'run_job flag : {flag}')
         if flag==0:
             task_data['status_code'] = 1
             task_data['status_text'] = '正常结束'
@@ -418,11 +421,12 @@ async def venti_adhoc_start(request: Request, data: dict):
         task_data['status_code'] = 5
         task_data['status_text'] = '异常中止'
     finally:
-        print('&&&why in finally')
         task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        await update_venti_task(venti_task_id, task_data)
         await stop_job(request, data)
-        request.app.state.is_job_cancelled[house_index]= False
+        print(f'执行关闭命令完毕，等待45s待设备完全关闭')
+        await asyncio.sleep(45)
+        await update_venti_task(venti_task_id, task_data)
+        # request.app.state.is_job_cancelled[house_index]= False
 
 
 # 0: completed normally, 1: cancelled, 2: timeout, 3: terminated abnormally
@@ -433,35 +437,25 @@ async def run_job(request: Request, data: dict):
         house_code=data.get('house_code')
         action_obj= convert_dev_addr(devices, house_code, 1)
         print(f'start action obj: {action_obj}')
-        await execute_commands(request, action_obj, house_code)
-        print(f'执行开启命令完毕，先睡眠5s')
-        await asyncio.sleep(5)
+        # await execute_commands(request, action_obj, house_code)
+        print(f'执行开启命令完毕，先等待45s待设备完全开启')
+        await asyncio.sleep(45)
         
         elapsed=0
         house_index = int(house_code) -1
         # sleep minor amount of time
         while True:
             if elapsed < duration:
-                print(f'in run_job，继续睡眠5s')
+                print(f'计时，累计睡眠：{elapsed}')
                 await asyncio.sleep(5)
                 elapsed += 5
             else:
+                print(f'已达到运行时长限制：{duration}')
                 return 0
             if request.app.state.is_job_cancelled[house_index]:
                 print(f"仓房{data.get('house_code')}作业被中止")
                 # todo: update job record status as terminated
                 return 1
-        # 准备复位
-        
-
-        # await stop_job(request, data)
-        # action_obj= convert_dev_addr(devices,house_code, 0)
-        # print(f'restore action obj: ,{action_obj}')
-        # await execute_commands(request, action_obj, house_code)
-        
-    # except asyncio.TimeoutError:
-    #     print(f"【超时错误】: 任务执行超过了设定的 {duration} 分钟限制，已被强制终止！")
-    #     # print(f"任务是否被取消: {adhoc_job.cancelled()}")
     except asyncio.CancelledError:
         print('run_job() cancelled')
     except Exception as e:
@@ -475,10 +469,11 @@ async def stop_job(request: Request, data: dict):
     action_obj = convert_dev_addr(devices,data.get('house_code'), 0)
     print(f'action_obj: {action_obj}')
     try:
-        await execute_commands(request, action_obj, data.get('house_code'))
+        # await execute_commands(request, action_obj, data.get('house_code'))
+        print(f'executed stop job commands')
         # todo: update job status centrally
     except Exception as e:
-        print(e)
+        print(f'stop job run in error: {e}')
         raise e
 
 async def persist_venti_task(task_data: dict):
@@ -580,6 +575,7 @@ async def get_running_venti_tasks(house_code) -> List[VentiTaskResponse]:
 @router.get("/api/venti/jobs/{house_code}")
 async def venti_jobs(house_code:str):
     running_jobs =await get_running_venti_tasks(house_code)
+    print(f'running jobs {running_jobs}')
     return running_jobs
     
 # 智能作业
@@ -791,18 +787,18 @@ def convert_dev_addr(devices, house_code, flag):
     # 'blowers': {'1': None, '2': 1, '3': None, '4': None, '5': None, '6': None, '7': 1, '8': None}
     # }
     silo_addrs= load_silo_addrs(house_code)
-    print('devices: ',devices)
-    print('silo in convert_dev_addr:', silo_addrs)
+    # print('devices: ',devices)
+    # print('silo in convert_dev_addr:', silo_addrs)
     blowers = devices['blowers']
     blower_offset= silo_addrs['blowers'][0]
     action_val=1
     if not flag:
         action_val=3
     filtered_blowers = {int(key) + blower_offset - 1: action_val for key, value in blowers.items() if value is not None}
-    print(f'filtered_blowers {filtered_blowers}')
+    # print(f'filtered_blowers {filtered_blowers}')
     filtered_dict={}
     # devices.pop("blowers", None) 
-    print(f'left devices {devices}')
+    # print(f'left devices {devices}')
 
     for key, value in devices.items():
         # print(f"键: {key} -> 值: {value}")
