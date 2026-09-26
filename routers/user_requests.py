@@ -437,8 +437,8 @@ async def run_job(request: Request, data: dict):
         house_code=data.get('house_code')
         action_obj= convert_dev_addr(devices, house_code, 1)
         print(f'start action obj: {action_obj}')
-        # await execute_commands(request, action_obj, house_code)
-        print(f'执行开启命令完毕，先等待45s待设备完全开启')
+        await execute_commands(request, action_obj, house_code)
+        print(f'执行开启命令完毕， 先等待45s待设备完全开启')
         await asyncio.sleep(45)
         
         elapsed=0
@@ -469,7 +469,7 @@ async def stop_job(request: Request, data: dict):
     action_obj = convert_dev_addr(devices,data.get('house_code'), 0)
     print(f'action_obj: {action_obj}')
     try:
-        # await execute_commands(request, action_obj, data.get('house_code'))
+        await execute_commands(request, action_obj, data.get('house_code'))
         print(f'executed stop job commands')
         # todo: update job status centrally
     except Exception as e:
@@ -482,7 +482,7 @@ async def persist_venti_task(task_data: dict):
         validated_data = VentiTaskCreate(**task_data)
     except Exception as e:
         print(f"❌ 报警数据格式校验失败: {e}")
-        return
+        raise e
 
     # 2. 数据库会话上下文管 理
     async with AsyncSessionLocal() as session:
@@ -500,6 +500,7 @@ async def persist_venti_task(task_data: dict):
         except Exception as e:
             await session.rollback()
             print(f"❌ venti task入库失败，已自动回滚: {e}")
+            raise e
 
 
 
@@ -588,11 +589,13 @@ async def venti_sched_start(request: Request, data: dict):
         # 检查开始条件
         print('开始智能作业')
         is_timeout=False
-        ret=False
+        ret=0
         
         #todo: create a task record with status 等待触发
         task_data={
+            'house_code': data.get('house_code'),
             'mode_name': data.get('mode_name'), 
+            'mode_id': data.get('mode_od'), 
             'status_code': -1 ,
             'status_text': '等待触发',
             'create_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -613,11 +616,20 @@ async def venti_sched_start(request: Request, data: dict):
         task_data['status_code'] = 2
         task_data['status_text'] = '等待触发超时'
         ret=2
+    except Exception as e:
+        print(f'等待开始条件发生异常:{e}')
+        # todo: 
+        ret=3
+        task_data['status_code'] = 5
+        task_data['status_text'] = '异常中止'
+        # todo: if create failed, wouldn't reach here
     finally:
         if ret:
             await stop_job(request, data)
             print(f"reset is_job_cancelled for house-{house_index}")
             request.app.state.is_job_cancelled[house_index]=False
+            print(f'执行关闭命令完毕，等待45s待设备完全关闭')
+            await asyncio.sleep(45)
             task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             await update_venti_task(venti_task_id, task_data)
             return
@@ -661,6 +673,8 @@ async def venti_sched_start(request: Request, data: dict):
         print(f'Schedule job异常:{e}')
     finally:
         await stop_job(request, data)
+        print(f'执行关闭命令完毕，等待45s待设备完全关闭')
+        await asyncio.sleep(45)
         task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await update_venti_task(venti_task_id, task_data)
         request.app.state.is_job_cancelled[house_index]=False
@@ -701,9 +715,9 @@ async def check_condition(request, data, flag, task_run_job):
             surface_avg= round(sum/35,1)
             ext_temp=request.app.state.external_temp[house_index]
             temp_diff=data.get('start_condition').get('minTotalTempDiff')
-            max_internan_humid= round(max(request.app.state.global_humid_cache[house_index])/10,1)
+            max_internal_humid= round(max(request.app.state.global_humid_cache[house_index])/10,1)
 
-            print(f"当前仓内最大湿度{max(request.app.state.global_humid_cache[house_index])}，\
+            print(f"当前仓内最大湿度:{max_internal_humid}，\
                   表层平均温度：{surface_avg}， 仓外温度{request.app.state.external_temp[house_index]}, 睡眠30s \
                   diff: {surface_avg - request.app.state.external_temp[house_index]}\
                   start_maxMoisture {data.get('start_condition').get('maxMoisture')}， \
@@ -717,18 +731,18 @@ async def check_condition(request, data, flag, task_run_job):
                 if elapsed < settings.sched_max_wait:
                     await asyncio.sleep(5)
                 else:
-                    print(f"等待开始条件超时，cancel run_job")
+                    print(f"等待开始条件超时， cancel run_job")
                     # task_run_job.cancel()
                     return 2
-                if max_internan_humid >= data.get('start_condition').get('maxMoisture')  \
+                if max_internal_humid >= data.get('start_condition').get('maxMoisture')  \
                     and  surface_avg - ext_temp >= data.get('start_condition').get('minTotalTempDiff'):
                     print(f"满足开始条件")
                     return 0
             else:
-                print(f"condtion 1：  {max_internan_humid < data.get('end_condition').get('maxMoisture')} \
+                print(f"condtion 1： {max_internal_humid < data.get('end_condition').get('maxMoisture')} \
                       condtion 2： {surface_avg - ext_temp < data.get('end_condition').get('minTotalTempDiff')}")
                 
-                if max_internan_humid < data.get('end_condition').get('maxMoisture')  \
+                if max_internal_humid < data.get('end_condition').get('maxMoisture')  \
                     and  surface_avg - ext_temp < data.get('end_condition').get('minTotalTempDiff'):
                     print('满足结束条件,等待10s后中止')
                     await asyncio.sleep(10)
