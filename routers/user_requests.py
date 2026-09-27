@@ -809,10 +809,12 @@ async def check_condition_by_mode(request, flag, data):
 @router.post("/api/venti/job/stop")
 async def venti_adhoc_stop(request: Request, data: dict):
     # todo # if running jobs：
+    # tasks= await get_running_venti_tasks(house_code)
+    # print(f'running tasks: {tasks}')
     house_code=data.get('house_code')
-    tasks= await get_running_venti_tasks(house_code)
-    print(f'running tasks: {tasks}')
-    if not tasks:
+    house_index = int(house_code) -1
+    plc_lock = request.app.state.plc_locks[house_index]
+    if not plc_lock.locked():
         print('当前无运行中的作业')
         # raise Exception('当前无运行中的作业')
         return {
@@ -824,7 +826,6 @@ async def venti_adhoc_stop(request: Request, data: dict):
             "status": "processing",
             "message": f"仓房 {house_code} 的停止指令之前已发出，系统正在响应并安全关闭设备，请耐心等待。"
         }
-    house_index = int(house_code) -1
     request.app.state.is_job_cancelled[house_index] =True
     print(f"house-{data.get('house_code')} 作业停止信号已发出")
     return {
