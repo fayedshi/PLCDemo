@@ -43,7 +43,7 @@ GLOBAL_STORE_INTERVAL=300
 
 
 
-plc_lock = asyncio.Lock()
+# plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
 # logger=None
 config_data=settings.raw_config
@@ -62,6 +62,10 @@ async def lifespan(app: FastAPI):
     
     app.state.num_ticks = [1] * silos_cnt
     app.state.dev_addrs_objects=[]
+
+    # plc Lock
+    app.state.plc_locks = [asyncio.Lock()] * silos_cnt
+
 
     # temp
     app.state.global_plc_cache = [[] for _ in range(silos_cnt)]
@@ -228,8 +232,8 @@ app.add_middleware(
 
 # 最多读取120个寄存器
 async def partial_read(plc_client, start_address, cnt):
-    async with plc_lock:
-        result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
+    # async with plc_lock:
+    result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
     if not result.isError():
         # logger.info(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
         return result.registers
@@ -662,8 +666,8 @@ async def send_to_influx(payload_text: str):
             raise Exception(f"[异常] 异步发送过程中发生错误，{datetime.now()}: {e} ")
 
 async def write_single_reg(plc_client, start_add: int, val:int):
-    async with plc_lock:
-        response = await plc_client.write_register(address=start_add, value=val, device_id=1, no_response_expected=False)
+    # 这里容易引起问题，如果关两个窗的间隙，锁被另一个线程拿到了去开了其中一扇窗
+    response = await plc_client.write_register(address=start_add, value=val, device_id=1, no_response_expected=False)
     if response.isError():
         logger.info("写入异常")
     else:
