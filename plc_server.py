@@ -9,13 +9,14 @@ import httpx
 from config import settings
 from log.plc_logger import logger
 from models import AlarmLog
+from routers import alarm_router, power_router, temp_router,venti_router, home_router, gran_router
 from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, get_reg_start_addr, registers_to_val
 from datetime import datetime
 from database import AsyncSessionLocal, Base, engine
-from routers.user_requests import router as user_request_router
-from routers.venti_router import router as venti_router
-from routers.gran_router import read_granaries, router as gran_router
+# from routers.home_router import router as home_router
+# from routers.venti_router import router as venti_router
+from routers.gran_router import read_granaries 
 from config_loader import load_config
 
 # ==================== 1. 全局变量 ====================
@@ -46,6 +47,7 @@ GLOBAL_STORE_INTERVAL=300
 # plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
 # logger=None
+
 config_data=settings.raw_config
 # granaries = config_data.get('granaries', [])
 granaries= settings.granaries
@@ -145,11 +147,11 @@ async def lifespan(app: FastAPI):
             # 从配置文件中读取设备地址
             # dev_addrs = load_device_addr()
             logger.info(f'current gran {gran}')
-            logger.info(f'gran _devices_addr, {gran["devices_addr"]}')
             app.state.dev_addrs_objects.append(gran['devices_addr'])
             logger.info(app.state.dev_addrs_objects)
-            temp_start=gran['devices_addr']['temp']
+            
             # polling_job = asyncio.create_task(plc_polling_task(index, plc_client, gran['code']))
+
             task_check_plc_connection=asyncio.create_task(check_plc_connection(index, plc_client, gran['code']))
             task_read_temp=asyncio.create_task(read_temp(index, plc_client, gran['code']))
             task_check_alarm =asyncio.create_task(check_temp_alarm('TEMP_HIGH', gran['code'], index))
@@ -161,22 +163,12 @@ async def lifespan(app: FastAPI):
             task_read_power=asyncio.create_task(read_power(index, plc_client, gran['code']))
             task_store_power=asyncio.create_task(store_power(index, gran['code']))
 
-            # polling_tasks.append(asyncio.create_task(read_temp(index, plc_client, gran['code'])))
-            # polling_tasks.append(asyncio.create_task(check_temp_alarm('TEMP_HIGH', gran['code'], index)))
-            # polling_tasks.append(asyncio.create_task(store_temp(index, gran['code'])))
-        
-            # polling_tasks.append(asyncio.create_task(read_humid(index, plc_client, gran['code'])))
-            # polling_tasks.extend(asyncio.create_task(store_humid(index, gran['code'])))
-                                 
-            # polling_tasks.append(asyncio.create_task(read_power(index, plc_client, gran['code'])))
-            # polling_tasks.append(asyncio.create_task(store_power(index, gran['code'])))
-
             polling_tasks.extend([task_check_plc_connection, task_read_temp, task_check_alarm, 
-                                  task_store_temp ,
-                                  task_read_humid, 
-                                task_store_humid, 
+                                    task_store_temp,
+                                    task_read_humid, 
+                                    task_store_humid, 
                                     task_read_power, 
-                                task_store_power
+                                    task_store_power
                                     ]) 
         yield
 
@@ -194,10 +186,12 @@ async def lifespan(app: FastAPI):
             logger.info(f"###{plc_client}采集任务已停止，与PLC的连接已释放完毕")
 
 app = FastAPI(lifespan=lifespan)
-app.include_router(user_request_router, tags=["用户请求管理"])
-app.include_router(gran_router, tags=["仓房管理"])
-app.include_router(venti_router, tags=["venti-mode config"])
-
+app.include_router(home_router.router, tags=["首页"])
+app.include_router(gran_router.router, tags=["仓房管理模块"])
+app.include_router(venti_router.router, tags=["通风管理模块"])
+app.include_router(temp_router.router, tags=["测温模块"])
+app.include_router(power_router.router, tags=["能耗监控模块"])
+app.include_router(alarm_router.router, tags=["报警模块"])
 
 # 1. 解决跨域问题（允许 Vue 前端和手机端访问）
 app.add_middleware(

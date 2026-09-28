@@ -1,6 +1,8 @@
 import time
 import asyncio
 import struct
+from config import settings
+
 async def build_influx_line_protocol(measurement, tags, fields, timestamp_ns=None):
     """
     动态将字典转换为 InfluxDB 3 标准行协议格式
@@ -64,3 +66,16 @@ def registers_to_val(reg_high, reg_low, flag):
 def get_reg_start_addr(silo, dev_name):
     # ext_temp_addr =granaries[index]['devices_addr']['ext-temp'][0]
     return silo['devices_addr'][dev_name][0]
+
+def load_silo_addrs(house_code):
+    # config_data=load_config()
+    # config_data=settings.granaries
+    
+    # granaries = config_data.get('granaries', []) 
+    granaries=settings.granaries
+    house_index = int(house_code) -1
+    
+    # for silo in granaries:
+    #     if (int)(silo['code'])==house_code:
+    #         return silo['devices_addr']
+    return granaries[house_index]['devices_addr']

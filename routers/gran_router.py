@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # app = FastAPI(title="Python CRUD System", description="基于FastAPI和SQLAlchemy的增删改查示例")
 
 # router = APIRouter(prefix="/gran", tags=["仓房管理模块"])
-router = APIRouter(tags=["仓房管理模块"])
+router = APIRouter()
 
 
 # @router.post("/items/", response_model=ItemResponse, status_code=201)
