@@ -2,7 +2,6 @@
 from fastapi import APIRouter, Query, Request,WebSocket
 import asyncio
 
-from config_loader import load_config
 
 from schemas import AlarmLogResponse
 from services.alarm_service import AlarmService
@@ -10,7 +9,7 @@ from services.alarm_service import AlarmService
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
-
+from logger.demo_logger import logger
 router = APIRouter()
 
 
@@ -21,7 +20,7 @@ router = APIRouter()
 @router.websocket("/ws/alarms")
 async def websocket_alarms_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print(f"客户端/ws/alarms已连接:")
+    logger.info(f"客户端/ws/alarms已连接:")
     # connected_clients.add(websocket)
     try:
         # 不需要分仓房，本来就是收集多个仓房
@@ -31,19 +30,17 @@ async def websocket_alarms_endpoint(websocket: WebSocket):
         # websocket.app.state.check_temp_alarm('TEMP_HIGH', gran['code'], index)
         while True:
             # await websocket.receive_text() # 维持心跳
-            # print(f'alarms: {websocket.app.state.active_alarms}')
+            # logger.info(f'alarms: {websocket.app.state.active_alarms}')
             # 握手成功后，立刻把当前“正在发生”的报警推给前端，防止前端刷新页面后看板变空
             await websocket.send_json(
                 websocket.app.state.active_alarms
             )
             await asyncio.sleep(2)
     except Exception as e:
-        print(f"客户端/ws/alarms断开连接: {e}")
+        logger.exception(f"客户端/ws/alarms断开连接: {e}")
     finally:
         websocket.app.state.read_alarm_interval= 5
 
-    # except WebSocketDisconnect:
-        # connected_clients.remove(websocket)
 
 # --- API 接口定义 ---
 @router.get("/api/alarms/history", response_model=AlarmLogResponse)
@@ -68,13 +65,13 @@ async def get_history_alarms(
             size=size
             # page=page, size=size
         )
-        # print('alarms, ', alarms)
+        # logger.info('alarms, ', alarms)
         return {
             "historyTotal": alarms_total,
             "items": alarms
         }
     except Exception as e:
-        print(f"Service 层执行异常: {str(e)}")
+        logger.info(f"Service 层执行异常: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="系统内部业务处理异常"
@@ -86,10 +83,10 @@ async def get_history_alarms(
 async def ack_alarm(request: Request, data: dict):
     try:
         alarm_key=data.get('alarm_key')
-        print(' in ack ',alarm_key)
+        logger.info(' in ack ',alarm_key)
         request.app.state.active_alarms[alarm_key]['ack']=True
         request.app.state.active_alarms[alarm_key]['ack_time']=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f'更新alarm ack成功')
+        logger.info(f'更新alarm ack成功')
         return {"success": True}
     except Exception as e:
-        print(f"更新/api/alarm/ack异常: {e}")
+        logger.exception(f"更新/api/alarm/ack异常: {e}")

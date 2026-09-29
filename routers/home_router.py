@@ -3,13 +3,9 @@ from fastapi import APIRouter, WebSocket
 import statistics
 import asyncio
 from config import settings
-# from config_loader import load_config
-
+from logger.demo_logger import logger
 
 from fastapi import APIRouter
-
-# from log.plc_logger import logger
-
 
 router = APIRouter()
 
@@ -21,6 +17,7 @@ async def get_house_cnt():
     print(f'length of grannaries {len(granaries)}')
     house_code_list= [gran['code'] for gran in granaries]
     print(f'house_code_list: {house_code_list}')
+    logger.info(f'house_code_list: {house_code_list}')
     return house_code_list
 
 # 3. WebSocket 接口（用于向手机和本地 Vue 实时推送 Modbus 数据）

@@ -11,7 +11,15 @@ async def gen():
 
 
 if __name__ == "__main__":
-   if(-4.399999999999999 > 2.1): 
+    if(-4.399999999999999 > 2.1): 
        print(True)
-    
+
+    js_obj= {6:'apple',8:'doe'}
+   
+    key_list=  [_key for _key in js_obj.keys()]
+
+    print(key_list)
+
+    for key in js_obj.keys():
+        print(f'my key: {key}')
 

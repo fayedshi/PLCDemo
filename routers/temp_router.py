@@ -11,7 +11,7 @@ import pandas as pd
 from date_util import to_utctime
 
 from fastapi import APIRouter, Query
-
+from logger.demo_logger import logger
 
 # 创建数据库表
 
@@ -25,7 +25,7 @@ router = APIRouter()
 
 @router.get("/api/tempreport")
 def show_cords_temp(request: Request, input_time: str):
-    print('input_time', input_time)
+    logger.info('input_time', input_time)
     influx_client=InfluxDBClient3(host=request.app.state.influx_db_url, token=request.app.state.influx_token, database="my_db")
     
     # input_time = obj.get('input_time')
@@ -56,7 +56,7 @@ def show_cords_temp(request: Request, input_time: str):
     # 3. 执行查询并转换数据
     try:
         # language="sql" 显式指定使用 SQL引擎
-        # print('to exectue',query)
+        # logger.info('to exectue',query)
         table = influx_client.query(query=query, language="sql")
 
         # 4. 将 PyArrow Table 转换为 Pandas DataFrame
@@ -64,12 +64,12 @@ def show_cords_temp(request: Request, input_time: str):
             return pd.DataFrame()
         # 将 PyArrow Table 转换为 Pandas DataFrame 以便后续分析
         df = table.to_pandas()
-        print('found data\n',df)
-        print(f"查询到 {len(df)} 条数据")
-        # print('df.head: ',df.head())
+        logger.info('found data\n',df)
+        logger.info(f"查询到 {len(df)} 条数据")
+        # logger.info('df.head: ',df.head())
         return df.to_dict(orient="records")[0]
     except Exception as e:
-        print(f"查询失败: {e}")
+        logger.error(f"查询失败: {e}")
     finally:
         influx_client.close()
 
@@ -77,7 +77,7 @@ def show_cords_temp(request: Request, input_time: str):
 @router.get("/api/temp-trend")
 def get_history_data(request: Request,start_time: str,end_time: str, layer: int, options: list[str] = Query([])):
     influx_client=InfluxDBClient3(host=request.app.state.influx_db_url, token=request.app.state.influx_token, database="my_db")
-    print('start_time',start_time,'options', options)
+    logger.info('start_time',start_time,'options', options)
     # 1. 动态生成 140 个列名的列表：['temp0', 'temp1', ..., 'temp139']
     
     step = 1 if layer == -1 else 4
@@ -119,7 +119,7 @@ def get_history_data(request: Request,start_time: str,end_time: str, layer: int,
     start = to_utctime(start_time)
     end = to_utctime(end_time)
 
-    print(f'sql to execute {clauses_str}')
+    logger.info(f'sql to execute {clauses_str}')
 # -- 1. InfluxDB v3 核心函数：将时间戳按 1 小时(INTERVAL '1 HOUR')对齐，作为前端 X 轴时间
     query = f"""
         SELECT 
@@ -136,7 +136,7 @@ def get_history_data(request: Request,start_time: str,end_time: str, layer: int,
     # 3. 执行查询并转换数据
     try:
         # language="sql" 显式指定使用 SQL引擎
-        # print('to exectue',query)
+        # logger.info('to exectue',query)
         table = influx_client.query(query=query, language="sql")
 
         # 4. 将 PyArrow Table 转换为 Pandas DataFrame
@@ -144,8 +144,8 @@ def get_history_data(request: Request,start_time: str,end_time: str, layer: int,
             return pd.DataFrame()
         # 将 PyArrow Table 转换为 Pandas DataFrame 以便后续分析
         df = table.to_pandas()
-        print('found data\n',df)
-        # print(f"查询到 {len(df)} 条数据")
+        logger.info('found data\n',df)
+        # logger.info(f"查询到 {len(df)} 条数据")
         df['time'] = pd.to_datetime(df['chart_time']) + timedelta(hours=8)
         df['time'] = df['time'].dt.strftime('%y-%m-%d %H:%M')
         # df['avg_temp'] = (df['avg_temp']/10).round(1)
@@ -158,16 +158,16 @@ def get_history_data(request: Request,start_time: str,end_time: str, layer: int,
         # final_df = df[['time', 'avg', 'min', 'max']]
         # 某个时间点可能没有数据，需要将NaN转为None ,前端js可以识别null
         df = df.replace({np.nan: None})
-        # print('final df', final_df)
+        # logger.info('final df', final_df)
 
         # 6. 一键转为 Python 列表字典结构 (对应 JSON 中的 [{...}, {...}])
         # orient='records' 是关键，它会自动处理 Pandas 中的 NaN 值为 Python 的 None (即 JSON 的 null)
         json_structure = df.to_dict(orient='records')
-        # print('json_structure',json_structure)
-        # print('df.head: ',df.head())
+        # logger.info('json_structure',json_structure)
+        # logger.info('df.head: ',df.head())
         return json_structure
     except Exception as e:
-        print(f"查询失败: {e}")
+        logger.error(f"查询失败: {e}")
     finally:
         influx_client.close()
 

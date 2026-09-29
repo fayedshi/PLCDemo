@@ -7,17 +7,15 @@ from pymodbus.client import AsyncModbusTcpClient
 from contextlib import asynccontextmanager
 import httpx
 from config import settings
-from log.plc_logger import logger
 from models import AlarmLog
 from routers import alarm_router, power_router, temp_router,venti_router, home_router, gran_router
 from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, get_reg_start_addr, registers_to_val
 from datetime import datetime
 from database import AsyncSessionLocal, Base, engine
-# from routers.home_router import router as home_router
-# from routers.venti_router import router as venti_router
 from routers.gran_router import read_granaries 
-from config_loader import load_config
+
+from logger.demo_logger import logger
 
 # ==================== 1. 全局变量 ====================
 # 全局共享的 PLC 最新数据缓存（所有手机都来这里拿数据，不直接轰炸 PLC）
@@ -26,27 +24,13 @@ DATABASE_NAME='my_db'
 STORAGE_INTERVAL=300
 GLOBAL_POLLING_INTERVAL=300
 GLOBAL_STORE_INTERVAL=300
-# 1. 解析参数并加载环境（必须在最外层）
-# parser = argparse.ArgumentParser()
-# parser.add_argument('--env', choices=['dev', 'test'], default='dev')
-# parser.add_argument('--house-code', help="粮仓代码 (必填)")
-# args, _ = parser.parse_known_args()
-# if not args.house_code:
-#     # 使用 parser.error 会打印错误信息、显示帮助文档并自动执行 sys.exit(2) 退出
-#     parser.error("缺少必填参数: --house-code")
-
-# HOUSE_CODE = args.house_code
-
-# load_dotenv(dotenv_path=f".env.{args.env}")
 
 # todo: 写在配置文件里
 # dev_start_address={'win':1,'door':11,'fan':19,'exhaust':27,'ac':33}
 
 
 
-# plc_lock = asyncio.Lock()
 window_state = {"status": "stopped"}
-# logger=None
 
 config_data=settings.raw_config
 # granaries = config_data.get('granaries', [])
@@ -55,9 +39,6 @@ silos_cnt=len(granaries)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # global logger
-    # logger=get_logger()
-
     # app.state.plc_ip= os.getenv("PLC_IP", "127.0.0.1")
     # app.state.plc_port=os.getenv("PLC_PORT")
     logger.info(f'silo_cnt: {silos_cnt}')
@@ -217,7 +198,7 @@ app.add_middleware(
 #         if item.get('code') == HOUSE_CODE:
 #             return item.get('devices_addr')
 #     return None
-        # print(config_data['granaries'][0])  # 输出: localhost
+        # logger.info(config_data['granaries'][0])  # 输出: localhost
 
 
 
@@ -589,7 +570,7 @@ async def read_power(index, plc_client, house_code):
             logger.info('in read_power')
             # if app.state.num_ticks[index] % app.state.read_power_interval[index]==0:
             raw_regs=await partial_read(plc_client,405,10)
-            print(f'raw_regs, {raw_regs}')
+            logger.info(f'raw_regs, {raw_regs}')
             data = []
             # 每次跳 2 步
             for i in range(0, len(raw_regs), 2):
@@ -601,7 +582,7 @@ async def read_power(index, plc_client, house_code):
                 else:
                     data.append(round(registers_to_val(raw_regs[i],raw_regs[1+1],'f'),1))
             app.state.global_power_cache[index] = data
-            print(f'data: {data},能耗数据: {app.state.global_power_cache[index]}')
+            logger.info(f'data: {data},能耗数据: {app.state.global_power_cache[index]}')
         # if app.state.num_ticks[index] == STORAGE_INTERVAL:
             # logger.info('done power read ',data)
             # await prep_store_data_cache(data, house_code, 'plc_power_data','power')
@@ -666,7 +647,7 @@ async def write_single_reg(plc_client, start_add: int, val:int):
     if response.isError():
         logger.info("写入异常")
     else:
-        logger.info(f"写入成功，当前寄存器值:, {response}")        
+        logger.error(f"写入成功，当前寄存器值:, {response}")        
 
 if __name__ == "__main__":
     # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
