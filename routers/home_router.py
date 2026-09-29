@@ -27,7 +27,7 @@ async def get_house_cnt():
 # 3. WebSocket 接口（用于向手机和本地 Vue 实时推送 Modbus 数据）
 @router.websocket("/ws/live/{gran_code}")
 async def websocket_endpoint(websocket: WebSocket, gran_code: str):
-    
+    house_index=None
     await websocket.accept()
     print(f"【后端提示】/ws/live前端house-{gran_code}客户端已连接！")
     try:
@@ -47,6 +47,7 @@ async def websocket_endpoint(websocket: WebSocket, gran_code: str):
             avg_humid=round(statistics.mean(websocket.app.state.global_humid_cache[house_index])/10,1)
             # websocket.app.state.global_power_cache
             send_buffer=websocket.app.state.global_power_cache[house_index][:4]
+            print(f'power: {websocket.app.state.global_power_cache[house_index]}')
             # data=[avg_temp,avg_humid]
             send_buffer.extend([avg_temp,avg_humid])
             # print(data)

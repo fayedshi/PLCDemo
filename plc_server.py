@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
     app.state.dev_addrs_objects=[]
 
     # plc Lock
-    app.state.plc_locks = [asyncio.Lock()] * silos_cnt
+    app.state.plc_locks = [asyncio.Lock() for _ in range(silos_cnt)]
 
 
     # temp
@@ -589,6 +589,7 @@ async def read_power(index, plc_client, house_code):
             logger.info('in read_power')
             # if app.state.num_ticks[index] % app.state.read_power_interval[index]==0:
             raw_regs=await partial_read(plc_client,405,10)
+            print(f'raw_regs, {raw_regs}')
             data = []
             # 每次跳 2 步
             for i in range(0, len(raw_regs), 2):
@@ -600,7 +601,7 @@ async def read_power(index, plc_client, house_code):
                 else:
                     data.append(round(registers_to_val(raw_regs[i],raw_regs[1+1],'f'),1))
             app.state.global_power_cache[index] = data
-        
+            print(f'data: {data},能耗数据: {app.state.global_power_cache[index]}')
         # if app.state.num_ticks[index] == STORAGE_INTERVAL:
             # logger.info('done power read ',data)
             # await prep_store_data_cache(data, house_code, 'plc_power_data','power')
