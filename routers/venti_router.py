@@ -8,7 +8,7 @@ from database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.venti_service import VentiConfigService
-from util import get_reg_start_addr, load_silo_addrs
+from util import get_reg_start_addr, convert_dev_addr
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, WebSocket
 import asyncio
@@ -163,6 +163,7 @@ async def control_window(request: Request, data: dict):
                 print(f'写入PLC成功，设备id {dev_id}，动作 {action_type}')
             else:
                 # batch devices
+                batch_dev_address={'window':31,'door':32}
                 category_type = data.get('category_type')
                 await request.app.state.write_single_reg(plc_client, batch_dev_address[category_type], action_type)
                 print(f'写入PLC全控设备{category_type}成功')
@@ -634,10 +635,28 @@ async def venti_adhoc_stop(request: Request, data: dict):
 async def execute_commands(request, action_obj, house_code):
     house_index = int(house_code) -1
     plc_client = request.app.state.plc_conns[house_index]
-    for key, value in action_obj.items():
-        await request.app.state.write_single_reg(plc_client, int(key), value)
-        await asyncio.sleep(0.05) # 微小延时
 
+    target_keys = ['blowers', 'exhaustFans']
+    if any(key in action_obj for key in target_keys) and 'dampers' in action_obj:
+            # oper dampers first
+            # damper_keys=[]
+        for key,val in action_obj['dampers'].items():
+            print(f'writing to dampers at {key}')
+            await request.app.state.write_single_reg(plc_client, int(key), val)
+                # await write_single_step(plc_client, key,val)
+        print(f'waiting for dampers to open/close fully')
+        await asyncio.sleep(45)
+
+    for key, value in action_obj.items():
+        if key=='dampers':
+            continue
+        act_vals=action_obj.get(key)
+        for key, move in act_vals.items():
+            await request.app.state.write_single_reg(plc_client, int(key), move)
+            await asyncio.sleep(0.05) # 微小延时
+    # todo: shutdown dampers first
+
+    
 # async def stop_adhoc(request, action_obj, house_code):
 #     house_index = int(house_code) -1
 #     plc_client = request.app.state.plc_conns[house_index]
@@ -647,38 +666,5 @@ async def execute_commands(request, action_obj, house_code):
 
 #  flag 1: start job, 0: stop job
 #  convert the address from ui to the json of register address and value
-def convert_dev_addr(devices, house_code, flag):
-    # {
-    # 'windows': [1, 4], 'dampers': [], 'exhaustFans': [], 'airConditioners': [], 
-    # 'blowers': {'1': None, '2': 1, '3': None, '4': None, '5': None, '6': None, '7': 1, '8': None}
-    # }
-    silo_addrs= load_silo_addrs(house_code)
-    # print('devices: ',devices)
-    # print('silo in convert_dev_addr:', silo_addrs)
-    blowers = devices['blowers']
-    blower_offset= silo_addrs['blowers'][0]
-    action_val=1
-    if not flag:
-        action_val=3
-    filtered_blowers = {int(key) + blower_offset - 1: action_val for key, value in blowers.items() if value is not None}
-    # print(f'filtered_blowers {filtered_blowers}')
-    filtered_dict={}
-    # devices.pop("blowers", None) 
-    # print(f'left devices {devices}')
 
-    for key, value in devices.items():
-        # print(f"键: {key} -> 值: {value}")
-        if key=='blowers':
-            continue
-        addrs=devices[key]
-        offset=silo_addrs[key][0]
-        if flag:
-            action_val=1
-        elif key=='exhaustFans':
-            action_val=3
-        else:
-            action_val=2
-        filtered_dict =filtered_dict| {num + offset - 1: action_val for num in addrs}
-    merged_dict = filtered_blowers | filtered_dict
-    return merged_dict
             

@@ -50,8 +50,8 @@ granaries:
         - 361
       ext-humid:
         - 362
-      window-state:
-        - 365
+      mode-display:
+        - 363
         - 374
       
   - code: '002'
@@ -85,6 +85,6 @@ granaries:
       humid:
         - 175
         - 314
-      window-state:
-        - 365
+      mode-display:
+        - 363
         - 374

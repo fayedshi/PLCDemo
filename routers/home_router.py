@@ -12,7 +12,6 @@ from fastapi import APIRouter
 
 
 router = APIRouter()
-batch_dev_address={'window':31,'door':32}
 
 granaries= settings.granaries
 # silos_cnt=len(granaries)

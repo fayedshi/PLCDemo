@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 
 router = APIRouter()
-batch_dev_address={'window':31,'door':32}
+
 
 # config_data=load_config()
 # granaries = config_data.get('granaries', [])

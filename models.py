@@ -75,3 +75,39 @@ class VentiTask(Base):
 
     def __repr__(self) -> str:
         return f"<VentiTask(name={self.mode_name!r}, status_code={self.status_code})>"
+
+# models/ca_model.py
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
+from sqlalchemy.ext.declarative import declarative_base
+from datetime import datetime
+
+Base = declarative_base()
+
+class CAModuleModel(Base):
+    __tablename__ = "ca_module_configs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    
+    # 核心气调参数 (14个基础字段)
+    mode_name = Column(String(50), nullable=False, comment="模式名称")
+    target_warehouse_pressure = Column(Float, default=0.0, comment="目标仓压值")
+    nitrogen_fill_amount = Column(Float, default=0.0, comment="充氮量值")
+    exhaust_time = Column(Integer, default=0, comment="排气时间(秒)")
+    waste_nitrogen_concentration = Column(Float, default=0.0, comment="废氮浓度值")
+    evacuation_negative_pressure = Column(Float, default=0.0, comment="抽空负压值")
+    target_concentration = Column(Float, default=0.0, comment="目标浓度值")
+    auto_concentration_hold = Column(Float, default=0.0, comment="自动浓度保持值")
+    ab_group_concentration_diff = Column(Float, default=0.0, comment="AB组浓度差")
+    waste_nitrogen_utilization_interval = Column(Integer, default=0, comment="废氮利用间隔(分钟)")
+    maintain_negative_pressure = Column(Float, default=0.0, comment="维持负压值")
+    pause_warehouse_pressure = Column(Float, default=0.0, comment="暂停仓压值")
+    circulation_time = Column(Integer, default=0, comment="环流时间(秒)")
+    evacuation_pressure = Column(Float, default=0.0, comment="抽空压力值")
+    
+    # 26个阀门对应的字段 (Boolean 代表开关状态，或者用 Integer 代表开度)
+    # 动态生成字段定义，保持代码整洁
+    for i in range(1, 27):
+        locals()[f"valve_{i}"] = Column(Boolean, default=False, comment=f"{i}号阀门状态")
+        
+    create_time = Column(DateTime, default=datetime.now, comment="创建时间")
+    update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="更新时间")

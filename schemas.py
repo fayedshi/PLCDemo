@@ -137,4 +137,69 @@ class VentiTaskResponse(VentiTaskBase):
     }
 
 
-        
+
+# schemas/ca_schema.py
+from pydantic import BaseModel, Field
+from typing import Optional
+from datetime import datetime
+
+# 基础共享字段
+class CABase(BaseModel):
+    mode_name: str = Field(..., max_length=50, description="模式名称")
+    target_warehouse_pressure: float = 0.0
+    nitrogen_fill_amount: float = 0.0
+    exhaust_time: int = 0
+    waste_nitrogen_concentration: float = 0.0
+    evacuation_negative_pressure: float = 0.0
+    target_concentration: float = 0.0
+    auto_concentration_hold: float = 0.0
+    ab_group_concentration_diff: float = 0.0
+    waste_nitrogen_utilization_interval: int = 0
+    maintain_negative_pressure: float = 0.0
+    pause_warehouse_pressure: float = 0.0
+    circulation_time: int = 0
+    evacuation_pressure: float = 0.0
+
+    # 动态支持 26 个阀门的类型注解（由于 Pydantic 静态编译特性，此处直接显式列出或用万能配置）
+    # 为保证严谨，我们在最下方通过 dynamic create 或直接声明。这里采用显式兼容写法：
+    valve_1: bool = Field(False, description="阀门1状态")
+    valve_2: bool = Field(False, description="阀门2状态")
+    valve_3: bool = Field(False, description="阀门3状态")
+    valve_4: bool = Field(False, description="阀门4状态")
+    valve_5: bool = Field(False, description="阀门5状态")
+    valve_6: bool = Field(False, description="阀门6状态")
+    valve_7: bool = Field(False, description="阀门7状态")
+    valve_8: bool = Field(False, description="阀门8状态")
+    valve_9: bool = Field(False, description="阀门9状态")
+    valve_10: bool = Field(False, description="阀门10状态")
+    valve_11: bool = Field(False, description="阀门11状态")
+    valve_12: bool = Field(False, description="阀门12状态")
+    valve_13: bool = Field(False, description="阀门13状态")
+    valve_14: bool = Field(False, description="阀门14状态")
+    valve_15: bool = Field(False, description="阀门15状态")
+    valve_16: bool = Field(False, description="阀门16状态")
+    valve_17: bool = Field(False, description="阀门17状态")
+    valve_18: bool = Field(False, description="阀门18状态")
+    valve_19: bool = Field(False, description="阀门19状态")
+    valve_20: bool = Field(False, description="阀门20状态")
+    valve_21: bool = Field(False, description="阀门21状态")
+    valve_22: bool = Field(False, description="阀门22状态")
+    valve_23: bool = Field(False, description="阀门23状态")
+    valve_24: bool = Field(False, description="阀门24状态")
+    valve_25: bool = Field(False, description="阀门25状态")
+    valve_26: bool = Field(False, description="阀门26状态")
+
+
+class CACreate(CABase):
+    pass
+
+class CAUpdate(CABase):
+    mode_name: Optional[str] = None
+
+class CAResponse(CABase):
+    id: int
+    create_time: datetime
+    update_time: datetime
+
+    class Config:
+        from_attributes = True # 旧版为 orm_mode = True
