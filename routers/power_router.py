@@ -47,7 +47,7 @@ def get_power_history(request: Request,start_time: str,end_time: str, interval: 
             return pd.DataFrame()
         # 将 PyArrow Table 转换为 Pandas DataFrame 以便后续分析
         df = table.to_pandas()
-        logger.info('found data\n',df)
+        logger.info(f'found data\n,{df}')
         # logger.info(f"查询到 {len(df)} 条数据")
         df['time'] = pd.to_datetime(df['chart_time']) + timedelta(hours=8)
         if interval.endswith('day'):

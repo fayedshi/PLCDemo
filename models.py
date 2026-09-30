@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Float
+from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, SmallInteger, String, Float
 from database import Base
 
 class Granary(Base):
@@ -76,12 +76,6 @@ class VentiTask(Base):
     def __repr__(self) -> str:
         return f"<VentiTask(name={self.mode_name!r}, status_code={self.status_code})>"
 
-# models/ca_model.py
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
-from sqlalchemy.ext.declarative import declarative_base
-from datetime import datetime
-
-Base = declarative_base()
 
 class CAModuleModel(Base):
     __tablename__ = "ca_module_configs"
@@ -108,6 +102,36 @@ class CAModuleModel(Base):
     # 动态生成字段定义，保持代码整洁
     for i in range(1, 27):
         locals()[f"valve_{i}"] = Column(Boolean, default=False, comment=f"{i}号阀门状态")
-        
+
+    for i in range(1, 7):
+            locals()[f"blower_{i}"] = Column(Boolean, default=False, comment=f"{i}号风机状态")
+            
     create_time = Column(DateTime, default=datetime.now, comment="创建时间")
     update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="更新时间")
+
+
+class CAJobModel(Base):
+    __tablename__ = "ca_jobs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    house_code = Column(String(50), nullable=False, index=True, comment="仓房编号")
+    mode_id = Column(Integer, nullable=False, comment="关联的气调模式ID")
+    mode_name = Column(String(50), nullable=False, comment="模式名称")
+    
+    # 核心状态控制：0-等待触发, 1-运行中, 2-已暂停, 3-正常结束, 4-被人为中止, 5-异常中止
+    status_code = Column(SmallInteger, default=0, index=True)
+    status_text = Column(String(20), default="等待触发")
+    
+    plan_start_time = Column(DateTime, nullable=True, comment="计划开始时间")
+    start_time = Column(DateTime, nullable=True, comment="实际开始时间")
+    end_time = Column(DateTime, nullable=True, comment="结束/中止时间")
+    
+    # 镜像保存当时的快照参数（防止配置表被修改后影响历史追溯）
+    runtime_params = Column(JSON, nullable=True, comment="运行时的完整工艺与阀门参数快照")
+    
+    create_time = Column(DateTime, default=datetime.now)
+    update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+
+

@@ -189,6 +189,13 @@ class CABase(BaseModel):
     valve_25: bool = Field(False, description="阀门25状态")
     valve_26: bool = Field(False, description="阀门26状态")
 
+    # 6个风机
+    blower_1: bool = Field(False, description="风机1状态")
+    blower_2: bool = Field(False, description="风机2状态")
+    blower_3: bool = Field(False, description="风机3状态")
+    blower_4: bool = Field(False, description="风机4状态")
+    blower_5: bool = Field(False, description="风机5状态")
+    blower_6: bool = Field(False, description="风机6状态")
 
 class CACreate(CABase):
     pass

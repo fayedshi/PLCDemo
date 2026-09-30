@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 import httpx
 from config import settings
 from models import AlarmLog
-from routers import alarm_router, power_router, temp_router,venti_router, home_router, gran_router
+from routers import alarm_router, ca_router, power_router, temp_router,venti_router, home_router, gran_router
 from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, get_reg_start_addr, registers_to_val
 from datetime import datetime
@@ -18,7 +18,7 @@ from routers.gran_router import read_granaries
 from logger.demo_logger import logger
 
 # ==================== 1. 全局变量 ====================
-# 全局共享的 PLC 最新数据缓存（所有手机都来这里拿数据，不直接轰炸 PLC）
+# 全局共享的 PLC 最新数据缓存（所有手机都来这里拿数据，不直接轰炸 PLC） 
 
 DATABASE_NAME='my_db'
 STORAGE_INTERVAL=300
@@ -93,6 +93,8 @@ async def lifespan(app: FastAPI):
         app.state.read_dev_state_interval[i]=300
     
     logger.info(f'read granaries: {granaries}')
+
+    
 
     async with engine.begin() as conn:
         # 如果表不存在，则自动创建（生产环境建议使用 Alembic 迁移）
@@ -173,6 +175,7 @@ app.include_router(venti_router.router, tags=["通风管理模块"])
 app.include_router(temp_router.router, tags=["测温模块"])
 app.include_router(power_router.router, tags=["能耗监控模块"])
 app.include_router(alarm_router.router, tags=["报警模块"])
+app.include_router(ca_router.router, tags=["报警模块"])
 
 # 1. 解决跨域问题（允许 Vue 前端和手机端访问）
 app.add_middleware(
@@ -210,7 +213,7 @@ async def partial_read(plc_client, start_address, cnt):
     # async with plc_lock:
     result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
     if not result.isError():
-        # logger.info(f"【采集成功】温度数据: {result.registers} | 时间: {datetime.now()}")
+        # logger.info(f"【采集成功】温度数据: {result.registers} | 时间: ")
         return result.registers
     else:
         raise Exception("【采集温度数据失败】PLC 内部错误响应")
@@ -256,7 +259,7 @@ async def read_granary_max_temp(gran_code):
 #             )
             
 #         except Exception as e:
-#             logger.info(f"【采集异常】: {e}, {datetime.now()}")
+#             logger.info(f"【采集异常】: {e}, ")
 #         finally:
 #             if app.state.num_ticks[index]==STORAGE_INTERVAL:
 #                 app.state.num_ticks[index] = 1
@@ -279,7 +282,7 @@ async def check_plc_connection(index, plc_client, house_code):
         try:
             await clear_alarm(event_type, house_code)            
         except Exception as e:
-            logger.info(f"【PLC连接异常】: {e}, {datetime.now()}")
+            logger.info(f"【PLC连接异常】: {e}, ")
         
         # 每1秒采集一次
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
@@ -293,7 +296,7 @@ async def check_plc_connection(index, plc_client, house_code):
 def check_cache_val(data_cache):
     for v in data_cache:
         if v >= 50000:
-            logger.info(f"***************** Invalid value found: {v},时间: {datetime.now()}")
+            logger.info(f"***************** Invalid value found: {v},时间: ")
             return False
         
     return True
@@ -390,7 +393,7 @@ async def gen_alarm(event_type, house_code, msg):
 
 async def read_temp_data(temp_start_addr, plc_client):
     temp_data=await partial_read(plc_client, temp_start_addr, 120)
-    # logger.info(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: {datetime.now()}")
+    # logger.info(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: ")
     # break
     temp_data.extend(await partial_read(plc_client,temp_start_addr+120,20))
     return temp_data
@@ -402,7 +405,7 @@ async def process_temp(index, plc_client, house_code, temp_start):
         try:
             logger.info('in process_temp')
             # temp_data=await partial_read(plc_client,35,120)
-            # # logger.info(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: {datetime.now()}")
+            # # logger.info(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: ")
             # # break
             # temp_data.extend(await partial_read(plc_client,155,20))
             # 临时加入，检查异常值，可能不需要
@@ -419,14 +422,14 @@ async def process_temp(index, plc_client, house_code, temp_start):
                 format_display_temp(index,temp_data), 
                 store_temp(index,temp_data, house_code), return_exceptions=True)
         except Exception as e:
-            logger.info(f'############## poll_and_store_temp in house-{house_code}发生异常: {e}, {datetime.now()}')
+            logger.info(f'############## poll_and_store_temp in house-{house_code}发生异常: {e}, ')
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 async def read_temp(index, plc_client, house_code):
     while(True):
         try:
             temp_data=await partial_read(plc_client,35,120)
-            # logger.info(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: {datetime.now()}")
+            # logger.info(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: ")
             # break
             temp_data.extend(await partial_read(plc_client,155,20))
             # 临时加入，检查异常值，可能不需要
@@ -450,7 +453,7 @@ async def read_temp(index, plc_client, house_code):
             app.state.global_display_temp_cache[index] = temp_data
             # format_display_temp(index,temp_data), 
         except Exception as e:
-            logger.info(f'############## read_temp in house-{house_code}发生异常: {e}, {datetime.now()}')
+            logger.info(f'############## read_temp in house-{house_code}发生异常: {e}, ')
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 
@@ -468,7 +471,7 @@ async def store_temp(index, house_code):
             logger.info('No data in temp cache, waiting for 2secs **********************')
             await asyncio.sleep(2)
         await prep_store_data_cache(app.state.global_plc_cache[index], house_code, 'plc_temp_data','temp')
-        logger.info(f'【温度数据存储成功 house-{house_code}】{datetime.now()}')
+        logger.info(f'【温度数据存储成功 house-{house_code}】')
         await asyncio.sleep(GLOBAL_STORE_INTERVAL)
 
 
@@ -479,7 +482,7 @@ async def store_humid(index, house_code):
         # if app.state.num_ticks[index]==STORAGE_INTERVAL:
         await prep_store_data_cache(app.state.global_humid_cache[index], house_code, 'plc_humid_data','humid')
         # await prep_store_data_cache(humid_cache, house_code, 'plc_humid_data','humid')
-        logger.info(f'【Humidity数据存储成功 house-{house_code}】{datetime.now()}')
+        logger.info(f'【Humidity数据存储成功 house-{house_code}】')
         await asyncio.sleep(GLOBAL_STORE_INTERVAL)
 
 async def store_power(index,  house_code):
@@ -489,7 +492,7 @@ async def store_power(index,  house_code):
         # if app.state.num_ticks[index]==STORAGE_INTERVAL:
         await prep_store_data_cache(app.state.global_power_cache[index], house_code, 'plc_power_data','power')
         # await prep_store_data_cache(humid_cache, house_code, 'plc_humid_data','humid')
-        logger.info(f'【能耗数据存储成功 house-{house_code}】{datetime.now()}')
+        logger.info(f'【能耗数据存储成功 house-{house_code}】')
         await asyncio.sleep(GLOBAL_STORE_INTERVAL)
 
 # await prep_store_data_cache(data, house_code, 'plc_power_data','power')
@@ -509,9 +512,9 @@ async def store_power(index,  house_code):
 
 #             # if app.state.num_ticks[index]==STORAGE_INTERVAL:
 #                 await prep_store_data_cache(humid_cache, house_code, 'plc_humid_data','humid')
-#                 logger.info(f'【湿度数据存储成功】{datetime.now()}')
+#                 logger.info(f'【湿度数据存储成功】')
 #         except Exception as e:
-#             logger.info(f'############## poll_and_store_humid 发生异常: {e}, {datetime.now()}')
+#             logger.info(f'############## poll_and_store_humid 发生异常: {e}, ')
 #         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 async def read_humid(index, plc_client, house_code):
@@ -531,9 +534,9 @@ async def read_humid(index, plc_client, house_code):
 
         # if app.state.num_ticks[index]==STORAGE_INTERVAL:
             # await prep_store_data_cache(humid_cache, house_code, 'plc_humid_data','humid')
-            # logger.info(f'【湿度数据存储成功】{datetime.now()}')
+            # logger.info(f'【湿度数据存储成功】')
         except Exception as e:
-            logger.info(f'############## poll_and_store_humid 发生异常: {e}, {datetime.now()}')
+            logger.info(f'############## poll_and_store_humid 发生异常: {e}, ')
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 
@@ -558,9 +561,9 @@ async def read_humid(index, plc_client, house_code):
 #             # if app.state.num_ticks[index] == STORAGE_INTERVAL:
 #                 # logger.info('done power read ',data)
 #                 await prep_store_data_cache(data, house_code, 'plc_power_data','power')
-#                 logger.info(f'【功耗数据存储成功】{datetime.now()}')
+#                 logger.info(f'【功耗数据存储成功】')
 #         except Exception as e:
-#             logger.error(f'############## poll_and_store_power 发生异常: {e}, {datetime.now()}')
+#             logger.error(f'############## poll_and_store_power 发生异常: {e}, ')
 #         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 
@@ -586,9 +589,9 @@ async def read_power(index, plc_client, house_code):
         # if app.state.num_ticks[index] == STORAGE_INTERVAL:
             # logger.info('done power read ',data)
             # await prep_store_data_cache(data, house_code, 'plc_power_data','power')
-            # logger.info(f'【功耗数据存储成功】{datetime.now()}')
+            # logger.info(f'【功耗数据存储成功】')
         except Exception as e:
-            logger.error(f'############## poll_and_store_power 发生异常: {e}, {datetime.now()}')
+            logger.error(f'############## poll_and_store_power 发生异常: {e}, ')
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 
@@ -635,11 +638,11 @@ async def send_to_influx(payload_text: str):
             
             # InfluxDB 3 写入成功时通常返回 204 No Content
             if response.status_code == 204:
-                logger.info(f"[成功] 成功异步写入数据块，大小: {len(payload_text.splitlines())} 行，时间: {datetime.now()}")
+                logger.info(f"[成功] 成功异步写入数据块，大小: {len(payload_text.splitlines())} 行，时间: ")
             else:
-                raise Exception(f"[错误] 写入失败，状态码: {response.status_code}, 原因: {response.text} {datetime.now()}")
+                raise Exception(f"[错误] 写入失败，状态码: {response.status_code}, 原因: {response.text} ")
         except Exception as e:
-            raise Exception(f"[异常] 异步发送过程中发生错误，{datetime.now()}: {e} ")
+            raise Exception(f"[异常] 异步发送过程中发生错误，: {e} ")
 
 async def write_single_reg(plc_client, start_add: int, val:int):
     # 这里容易引起问题，如果关两个窗的间隙，锁被另一个线程拿到了去开了其中一扇窗

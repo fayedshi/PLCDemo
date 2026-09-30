@@ -197,7 +197,7 @@ async def venti_adhoc_start(request: Request, data: dict, background_tasks: Back
     # 立即给前端返回响应
     return {
         "status": "success",
-        "message": f"仓房 {house_code} 即时作业已开启，预计运行时长 {data.get('duration')} 分钟。"
+        "message": f"仓房 {house_code} 即时作业已开启，预计运行时长 {data.get('duration')/60} 分钟。"
     }
 
 
@@ -429,7 +429,7 @@ async def venti_sched_start(request: Request, data: dict, background_tasks: Back
     background_tasks.add_task(background_venti_sched_task,request, data, house_index)
     return {
             "status": "success",
-            "message": f"仓房 {house_code} 智能作业已开启，预计运行时长 {data.get('duration')} 分钟。"
+            "message": f"仓房 {house_code} 智能作业已开启，预计运行时长 {data.get('duration')/60} 分钟。"
         }
 
 async def background_venti_sched_task(request, data, house_index):
@@ -569,16 +569,16 @@ async def check_condition_by_mode(request, flag, data):
         sum += request.app.state.global_display_temp_cache[house_index][i]
     surface_avg= round(sum/35,1)
     max_internal_humid = round(max(request.app.state.global_humid_cache[house_index])/10,1)
+    logger.info(f"house {house_index +1} 当前仓内最大湿度:{max_internal_humid}，\
+                表层平均温度：{surface_avg}， 仓外温度{request.app.state.external_temp[house_index]}, 睡眠30s \
+                diff: {surface_avg - request.app.state.external_temp[house_index]}\
+                start_maxMoisture {data.get('start_condition').get('maxMoisture')}， \
+                start_minTotalTempDiff {data.get('start_condition').get('minTotalTempDiff')}，\
+                end maxMoisture {data.get('end_condition').get('maxMoisture')}， \
+                end minTotalTempDiff {data.get('end_condition').get('minTotalTempDiff')}"
+                )
     if mode_id ==1:
         ext_temp = request.app.state.external_temp[house_index]    
-        logger.info(f"house {house_index +1} 当前仓内最大湿度:{max_internal_humid}，\
-            表层平均温度：{surface_avg}， 仓外温度{request.app.state.external_temp[house_index]}, 睡眠30s \
-            diff: {surface_avg - request.app.state.external_temp[house_index]}\
-            start_maxMoisture {data.get('start_condition').get('maxMoisture')}， \
-            start_minTotalTempDiff {data.get('start_condition').get('minTotalTempDiff')}，\
-            end maxMoisture {data.get('end_condition').get('maxMoisture')}， \
-            end minTotalTempDiff {data.get('end_condition').get('minTotalTempDiff')}"
-            )
         if flag ==0:
             if max_internal_humid >= data.get('start_condition').get('maxMoisture')  \
                 and  surface_avg - ext_temp >= data.get('start_condition').get('minTotalTempDiff'):
@@ -593,6 +593,7 @@ async def check_condition_by_mode(request, flag, data):
         for i in range(3, 140, 4):
             sum += request.app.state.global_display_temp_cache[house_index][i]
         bottom_avg= round(sum/35,1)
+        logger.info(f'bottom_avg: {bottom_avg}')
         if flag ==0:
             if max_internal_humid < data.get('start_condition').get('maxMoisture')  \
                 and  surface_avg - bottom_avg >= data.get('start_condition').get('minTotalTempDiff'):
@@ -637,7 +638,7 @@ async def execute_commands(request, action_obj, house_code):
     house_index = int(house_code) -1
     plc_client = request.app.state.plc_conns[house_index]
     # target_keys = ['blowers', 'exhaustFans']
-    if 'dampers' in action_obj:
+    if 'dampers' in action_obj and action_obj['dampers']:
             # oper dampers first
             # damper_keys=[]
         for key,val in action_obj['dampers'].items():
