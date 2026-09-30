@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 import httpx
 from config import settings
 from models import AlarmLog
-from routers import alarm_router, ca_router, power_router, temp_router,venti_router, home_router, gran_router
+from routers import alarm_router, ca_config_router, power_router, temp_router,venti_router, home_router, gran_router
 from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, get_reg_start_addr, registers_to_val
 from datetime import datetime
@@ -175,7 +175,7 @@ app.include_router(venti_router.router, tags=["通风管理模块"])
 app.include_router(temp_router.router, tags=["测温模块"])
 app.include_router(power_router.router, tags=["能耗监控模块"])
 app.include_router(alarm_router.router, tags=["报警模块"])
-app.include_router(ca_router.router, tags=["报警模块"])
+app.include_router(ca_config_router.router, tags=["报警模块"])
 
 # 1. 解决跨域问题（允许 Vue 前端和手机端访问）
 app.add_middleware(
@@ -296,7 +296,7 @@ async def check_plc_connection(index, plc_client, house_code):
 def check_cache_val(data_cache):
     for v in data_cache:
         if v >= 50000:
-            logger.info(f"***************** Invalid value found: {v},时间: ")
+            logger.error(f"***************** Invalid value found: {v},时间: ")
             return False
         
     return True
@@ -523,20 +523,17 @@ async def read_humid(index, plc_client, house_code):
             logger.info('in process_humid')
         # if app.state.num_ticks[index] % app.state.read_temp_humid_interval[index] ==0:
             # 读取140个湿度数据
-            humid_cache=await partial_read(plc_client, 175,120)
-            humid_cache.extend(await partial_read(plc_client,195,20))
+            humid_start = get_reg_start_addr(granaries[index],'humid')
+            humid_cache=await partial_read(plc_client, humid_start,120)
+            humid_cache.extend(await partial_read(plc_client,humid_start + 120, 20))
             if not check_cache_val(humid_cache):
                 logger.info(f"*****************PLC内部异常 in poll_and_store_humid: ，等待1分钟")
                 # app.state.global_humid_cache[index]=[]
                 await asyncio.sleep(60)
                 return
             app.state.global_humid_cache[index] = humid_cache
-
-        # if app.state.num_ticks[index]==STORAGE_INTERVAL:
-            # await prep_store_data_cache(humid_cache, house_code, 'plc_humid_data','humid')
-            # logger.info(f'【湿度数据存储成功】')
         except Exception as e:
-            logger.info(f'############## poll_and_store_humid 发生异常: {e}, ')
+            logger.exception(f'############## poll_and_store_humid 发生异常: {e}, ')
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 
@@ -586,10 +583,6 @@ async def read_power(index, plc_client, house_code):
                     data.append(round(registers_to_val(raw_regs[i],raw_regs[1+1],'f'),1))
             app.state.global_power_cache[index] = data
             logger.info(f'data: {data},能耗数据: {app.state.global_power_cache[index]}')
-        # if app.state.num_ticks[index] == STORAGE_INTERVAL:
-            # logger.info('done power read ',data)
-            # await prep_store_data_cache(data, house_code, 'plc_power_data','power')
-            # logger.info(f'【功耗数据存储成功】')
         except Exception as e:
             logger.error(f'############## poll_and_store_power 发生异常: {e}, ')
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
