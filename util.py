@@ -63,7 +63,7 @@ def registers_to_val(reg_high, reg_low, flag):
     return dint_val
 
 
-def get_reg_start_addr(silo, dev_name):
+def get_start_reg_addr(silo, dev_name):
     # ext_temp_addr =granaries[index]['devices_addr']['ext-temp'][0]
     return silo['devices_addr'][dev_name][0]
 

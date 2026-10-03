@@ -8,7 +8,7 @@ from database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.venti_service import VentiConfigService
-from util import get_reg_start_addr, convert_dev_addr
+from util import get_start_reg_addr, convert_dev_addr
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, WebSocket
 import asyncio
@@ -127,7 +127,7 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
         # house_config= load_silo_addrs(house_code)  
         # dev_start= house_config['devices_addr']['window-state'][0]
 
-        dev_start= get_reg_start_addr(settings.granaries[house_index],'mode-display')
+        dev_start= get_start_reg_addr(settings.granaries[house_index],'mode-display')
         logger.info(f'dev_start: {dev_start}')
         plc_client=websocket.app.state.plc_conns[house_index]
         while True:
@@ -139,6 +139,11 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
     except Exception as e:
         logger.info(f"ws/dev-state house-{house_code}客户端断开连接 : {e}")
 
+
+@router.get("/api/dev-address/{house_code}")
+async def get_dev_addr_list(house_code):
+    house_index = int(house_code) -1
+    return settings.granaries[house_index]['devices_addr']
 
 
 #  控制接口
