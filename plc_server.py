@@ -65,6 +65,8 @@ async def lifespan(app: FastAPI):
 
     #  jobs
     app.state.is_job_cancelled=[False] * silos_cnt
+    # 10/05 todo: 记录被作业占用的设备列表
+    app.state.running_devices=[{} for _ in range(silos_cnt)]
 
     # alarms
     app.state.active_alarms={}
