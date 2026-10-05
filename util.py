@@ -73,16 +73,17 @@ def load_silo_addrs(house_code) -> object:
     house_index = int(house_code) -1
     return granaries[house_index]['devices_addr']
 
+# todo: 10/05 too complex, need to refine later
 def convert_dev_addr(devices, house_code, flag):
     # {
     # 'windows': [1, 4], 'dampers': [], 'exhaustFans': [], 'airConditioners': [], 
     # 'blowers': {'1': None, '2': 1, '3': None, '4': None, '5': None, '6': None, '7': 1, '8': None}
     # }
-    silo_addrs= load_silo_addrs(house_code)
+    silo_addrs_obj= load_silo_addrs(house_code)
     # print('devices: ',devices)
     # print('silo in convert_dev_addr:', silo_addrs)
     blowers = devices['blowers']
-    blower_offset= silo_addrs['blowers'][0]
+    blower_offset= silo_addrs_obj['blowers'][0]
     action_val=1
     if not flag:
         action_val=3
@@ -97,46 +98,22 @@ def convert_dev_addr(devices, house_code, flag):
         if key=='blowers':
             continue
         addrs=devices[key]
-        offset=silo_addrs[key][0]
+        offset=silo_addrs_obj[key][0]
         if flag:
             action_val=1
         elif key=='exhaustFans':
             action_val=3
         else:
             action_val=2
-        filtered_dict =filtered_dict| {key: {num + offset - 1: action_val for num in addrs}}
+        filtered_dict = filtered_dict | {key: {num + offset - 1: action_val for num in addrs}}
     merged_dict = filtered_blowers | filtered_dict
-    return merged_dict
 
-async def execute_commands(request, action_obj,):
-    target_keys = ['blowers', 'exhaustFans']
-    #先开风门
-    if any(key in action_obj for key in target_keys) and 'dampers' in action_obj:
-        # oper dampers first
-        damper_keys=[]
-        for key,val in action_obj['dampers'].items():
-            print(f'writing to dampers at {key}')
-            # await write_single_step(plc_client, key,val)
-        
-        asyncio.sleep(45)
-            # damper_keys.push(key)
-        # wait til dampers opened/closed fully, or wait for 45 ses arbitraly
-
-        # damper_regs=await partial_read(plc_client, key,1)
-
-
-    # plc_client = request.app.state.plc_conns[house_index]
-    for key, value in action_obj.items():
-        await request.app.state.write_single_reg(plc_client, int(key), value)
-        await asyncio.sleep(0.05) # 微小延时
-
-if __name__ == "__main__":
-    # print(f"test loadsilo: {load_silo_addrs('001')}")
-
-    devices_obj={
-    'windows': [1, 4], 'dampers': [2], 'exhaustFans': [], 'airConditioners': [], 
-    'blowers': {'1': None, '2': 1, '3': None, '4': None, '5': None, '6': None, '7': 1, '8': None}
-    }
-    print(f"test convert_dev_addr:  {convert_dev_addr(devices_obj,'001',1)}")
+    result = [{k: v} for k, v in merged_dict.items() if k != 'dampers']
+    if 'dampers' in merged_dict:
+        if flag:
+            result.insert(0,{'dampers': merged_dict['dampers']})
+        else:
+            result.append({'dampers': merged_dict['dampers']})
+    return result
 
 

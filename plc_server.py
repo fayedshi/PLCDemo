@@ -382,30 +382,30 @@ async def read_temp_data(temp_start_addr, plc_client):
 
 
 
-async def process_temp(index, plc_client, house_code, temp_start):
-    while(True):
-        try:
-            logger.info('in process_temp')
-            # temp_data=await partial_read(plc_client,35,120)
-            # # logger.info(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: ")
-            # # break
-            # temp_data.extend(await partial_read(plc_client,155,20))
-            # 临时加入，检查异常值，可能不需要
-            temp_data= await read_temp_data(temp_start, plc_client)
-            res =  check_cache_val(temp_data)
-            if not res:
-                logger.info(f"*****************PLC内部异常 in poll_and_store_temp: ，等待1分钟")
-                await asyncio.sleep(60)
-                return
+# async def process_temp(index, plc_client, house_code, temp_start):
+#     while(True):
+#         try:
+#             logger.info('in process_temp')
+#             # temp_data=await partial_read(plc_client,35,120)
+#             # # logger.info(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: ")
+#             # # break
+#             # temp_data.extend(await partial_read(plc_client,155,20))
+#             # 临时加入，检查异常值，可能不需要
+#             temp_data= await read_temp_data(temp_start, plc_client)
+#             res =  check_cache_val(temp_data)
+#             if not res:
+#                 logger.info(f"*****************PLC内部异常 in poll_and_store_temp: ，等待1分钟")
+#                 await asyncio.sleep(60)
+#                 return
 
-            # check alarm and format display data and store temp
-            await asyncio.gather(
-                check_temp_alarm('TEMP_HIGH', temp_data, house_code,index), 
-                format_display_temp(index,temp_data), 
-                store_temp(index,temp_data, house_code), return_exceptions=True)
-        except Exception as e:
-            logger.info(f'############## poll_and_store_temp in house-{house_code}发生异常: {e}, ')
-        await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
+#             # check alarm and format display data and store temp
+#             await asyncio.gather(
+#                 check_temp_alarm('TEMP_HIGH', temp_data, house_code,index), 
+#                 format_display_temp(index,temp_data), 
+#                 store_temp(index,temp_data, house_code), return_exceptions=True)
+#         except Exception as e:
+#             logger.info(f'############## poll_and_store_temp in house-{house_code}发生异常: {e}, ')
+#         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 async def read_temp(index, plc_client, house_code):
     while(True):
@@ -420,7 +420,7 @@ async def read_temp(index, plc_client, house_code):
             ext_temp_addr = get_start_reg_addr(granaries[index],'ext-temp')
             external_temp =await partial_read(plc_client,ext_temp_addr,1)
             logger.info(f'ext_temp_addr: {ext_temp_addr} , external_temp:{external_temp}')
-            res =  check_cache_val(temp_data, 200)
+            res =  check_cache_val(temp_data, 2000)
             if not res:
                 logger.info(f"house-{house_code}*****************PLC内部异常 in read_temp()，等待1分钟")
                 # app.state.global_plc_cache[index]=[]
@@ -502,13 +502,13 @@ async def read_humid(index, plc_client, house_code):
             humid_start = get_start_reg_addr(granaries[index],'humid')
             humid_cache=await partial_read(plc_client, humid_start,120)
             humid_cache.extend(await partial_read(plc_client,humid_start + 120, 20))
-            if not check_cache_val(humid_cache, 200):
-                logger.info(f"house-{house_code}*****************PLC内部异常 in poll_and_store_humid: ，等待1分钟")
+            if not check_cache_val(humid_cache, 2000):
+                logger.info(f"house-{house_code}*****************check_cache_val false: ，等待1分钟")
                 await asyncio.sleep(60)
                 continue
             app.state.global_humid_cache[index] = humid_cache
         except Exception as e:
-            logger.exception(f'house-{house_code}############## poll_and_store_humid 发生异常: {e}, ')
+            logger.exception(f'house-{house_code}############## read_humid 发生异常: {e}, ')
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 
