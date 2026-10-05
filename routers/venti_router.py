@@ -8,7 +8,7 @@ from database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.venti_service import VentiConfigService
-from util import get_reg_start_addr, convert_dev_addr
+from util import get_start_reg_addr, convert_dev_addr
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, WebSocket
 import asyncio
@@ -116,6 +116,12 @@ async def delete_granary(item_id: int, db: AsyncSession = Depends(get_db)):
     await db.commit()
     return {"status": "success", "msg": f"成功删除 ID 为 {item_id} 的廒间"}
 
+# async def populate_states(addr_obj):
+#     cates=['control-states','windows-states', 'dampers-states', 'blowers-states','exhaustFans-states','airConditioners-states']
+#     states_buffer={}
+#     for cate in cates:
+#         if cate in addr_obj:
+#             states_buffer[cate]=
 
 @router.websocket("/ws/dev-state/{house_code}")
 async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
@@ -124,21 +130,29 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
     logger.info("【后端提示】发现/ws/dev-state前端客户端已连接！")
     try:
         house_index = int(house_code) -1
-        # house_config= load_silo_addrs(house_code)  
-        # dev_start= house_config['devices_addr']['window-state'][0]
-
-        dev_start= get_reg_start_addr(settings.granaries[house_index],'mode-display')
-        logger.info(f'dev_start: {dev_start}')
+        states_obj= get_dev_addr_list(house_code)['states']
+        states_buffer={}
+        # logger.info(f'dev_start: {dev_start}')
         plc_client=websocket.app.state.plc_conns[house_index]
+        cates=['control','windows', 'dampers', 'blowers','exhaustFans','airConditioners']
         while True:
-            read_plc_func=websocket.app.state.partial_read
-            dev_state_cache = await read_plc_func(plc_client,dev_start,34)
-            await websocket.send_json(dev_state_cache)
+            for cate in cates:
+                if cate in states_obj:
+                    start=states_obj[cate][0]
+                    end=states_obj[cate][1]
+                    dev_state_cache = await websocket.app.state.partial_read(plc_client, start, end - start + 1)
+                    states_buffer[cate] = dev_state_cache
+            await websocket.send_json(states_buffer)
             # send to vue every 2 sec
             await asyncio.sleep(1)
     except Exception as e:
-        logger.info(f"ws/dev-state house-{house_code}客户端断开连接 : {e}")
+        logger.exception(f"ws/dev-state house-{house_code}客户端断开连接 : {e}")
 
+
+@router.get("/api/dev-address/{house_code}")
+async def get_dev_addr_list(house_code):
+    house_index = int(house_code) -1
+    return settings.granaries[house_index]['devices_addr']
 
 
 #  控制接口
@@ -149,18 +163,25 @@ async def control_window(request: Request, data: dict):
     house_index = int(data.get('house_code')) -1
     logger.info(f'准备写入设备id {dev_id} , action_type: {action_type}')
     plc_lock = request.app.state.plc_locks[house_index]
-    # todo: 枷锁精确到某个设备
+    # todo: 加锁精确到某个设备
     if plc_lock.locked():
-        return {
-            "status": "busy", 
-            "message": f"仓房{house_index+1} 正处于通风作业中，请稍后再试！"
-        }
+        running_devs_obj= request.app.state.running_devices[house_index]
+        if dev_id:
+            dev_info = dev_id.split('-')
+            if dev_info[0] in running_devs_obj and int(dev_info[1])+1 in running_devs_obj[dev_info[0]]:
+                return {
+                    "status": "busy", 
+                    "message": f"该设备被仓房{house_index+1} 通风作业占用，请稍后再试！"
+                }
     async with plc_lock:
         try:
             plc_client=request.app.state.plc_conns[house_index]
             if dev_id:
                 dev_info = dev_id.split('-')
-                await request.app.state.write_single_reg(plc_client,int(dev_info[1]), action_type)
+                # dev_info 为 blowers-7形式
+                offset= get_start_reg_addr(settings.granaries[house_index], dev_info[0])
+                target_addr=int(dev_info[1]) + offset
+                await request.app.state.write_single_reg(plc_client, target_addr, action_type)
                 logger.info(f'写入PLC成功，设备id {dev_id}，动作 {action_type}')
             else:
                 # batch devices
@@ -192,6 +213,7 @@ async def venti_adhoc_start(request: Request, data: dict, background_tasks: Back
         
     # 初始化作业取消标志为 False（必须在接口层立刻重置，防止上一次的取消信号残留）
     request.app.state.is_job_cancelled[house_index] = False
+    
     # 🔥 核心改变：把原本沉重的 try...finally 一整套大流程，丢进 FastAPI 的后台线程队列
     background_tasks.add_task(background_venti_adhoc_job, request, data, house_index)
     # 立即给前端返回响应
@@ -210,6 +232,8 @@ async def background_venti_adhoc_job(request: Request, data: dict, house_index: 
     
     # 整个“开-等-关”全套动作上大锁，期间该仓房不允许任何其他指令插队
     async with plc_lock:
+        request.app.state.running_devices[house_index] ={}
+        request.app.state.running_devices[house_index] =data.get('devices')
         logger.info(f'【后台】仓房 {house_index + 1} 成功获取业务大锁，准备开始作业...')
         try:
             # 步骤 A：向数据库插入初始运行记录
@@ -263,6 +287,8 @@ async def background_venti_adhoc_job(request: Request, data: dict, house_index: 
                     logger.info(f'【后台】成功更新数据库最终状态为: {task_data["status_text"]}')
                 except Exception as db_err:
                     logger.info(f'【后台】更新数据库状态失败: {db_err}')
+        # release running_devices from job
+        request.app.state.running_devices[house_index] ={}
         logger.info(f"【后台】仓房 {house_index + 1} 整个作业流安全退出，大锁已释放。")
 
 # 0: completed normally, 1: cancelled, 2: timeout, 3: terminated abnormally
@@ -436,6 +462,8 @@ async def background_venti_sched_task(request, data, house_index):
     plc_lock = request.app.state.plc_locks[house_index]
     async with plc_lock:
         try:
+            request.app.state.running_devices[house_index] ={}
+            request.app.state.running_devices[house_index] =data.get('devices')
             # 检查开始条件
             logger.info('开始智能作业')
             ret_code=0
@@ -516,6 +544,8 @@ async def background_venti_sched_task(request, data, house_index):
             await asyncio.sleep(45)
             task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             await update_venti_task(venti_task_id, task_data)
+        # release running_devices from job
+        request.app.state.running_devices[house_index] ={}
         
 # mode 0: ConditionUpperSilo,  1: ConditionAccumulatedHeat,  2: ConditionWholeSilo,
 # flag 0: start condition, 1: end condition

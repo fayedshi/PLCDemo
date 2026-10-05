@@ -50,9 +50,26 @@ granaries:
         - 361
       ext-humid:
         - 362
-      mode-display:
-        - 363
-        - 374
+    # 设备状态信息
+      states:
+        control:
+          - 363
+          - 364
+        windows:
+          - 365
+          - 374
+        dampers:
+          - 375
+          - 382
+        blowers:
+          - 383
+          - 390
+        exhaustFans:
+          - 391
+          - 394
+        airConditioners:
+          - 395
+          - 396
       
   - code: '002'
     PLC_IP: 192.168.0.20
@@ -82,9 +99,29 @@ granaries:
         - 174
       ext-temp:
         - 361
+      ext-humid:
+        - 362
       humid:
         - 175
         - 314
-      mode-display:
-        - 363
-        - 374
+
+      # 设备状态信息
+      states:
+        control:
+          - 363
+          - 364
+        windows:
+          - 365
+          - 374
+        dampers:
+          - 375
+          - 382
+        blowers:
+          - 383
+          - 390
+        exhaustFans:
+          - 391
+          - 394
+        airConditioners:
+          - 395
+          - 396
