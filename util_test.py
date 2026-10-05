@@ -5,15 +5,15 @@ from util import convert_dev_addr
 
 
     # print(f"test loadsilo: {load_silo_addrs('001')}")
-async def test_run_actions():
+async def test_run_actions(obj_arr):
     devices_obj={
     'windows': [1, 4], 'dampers': [2,3], 'exhaustFans': [], 'airConditioners': [], 
     'blowers': {'1': None, '2': 1, '3': None, '4': None, '5': None, '6': None, '7': 1, '8': None}
     }
-    print(f"test convert_dev_addr:  {convert_dev_addr(devices_obj,'001',1)}")
+    print(f"test convert_dev_addr:  {convert_dev_addr(devices_obj,'001',0)}")
 
   
-    obj_arr=convert_dev_addr(devices_obj,'001',1)
+    # obj_arr=convert_dev_addr(devices_obj,'001',1)
     # for item in obj_arr:
     #     print(list(item.keys())[0])
 
@@ -37,13 +37,15 @@ async def test_convert_dev_addr():
     }
     print(f"test convert_dev_addr:  {convert_dev_addr(devices_obj,'001',1)}")
 
+    
+    
+
+
+if __name__ == "__main__":
+# asyncio.run(test_convert_dev_addr())
     obj_arr = [{ "blowers": { "20": 3 } },
                 { "windows": { "2": 2 } },
                 { "exhaustFans": { "28": 3 } },
                 { "airConditioners": {} },
                 { "dampers": { "12": 2 } }]
-    
-
-
-if __name__ == "__main__":
-   asyncio.run(test_convert_dev_addr())
+    asyncio.run(test_run_actions(obj_arr))
