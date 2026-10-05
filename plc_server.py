@@ -641,9 +641,9 @@ async def write_single_reg(plc_client, start_add: int, val:int):
     # 这里容易引起问题，如果关两个窗的间隙，锁被另一个线程拿到了去开了其中一扇窗
     response = await plc_client.write_register(address=start_add, value=val, device_id=1, no_response_expected=False)
     if response.isError():
-        logger.info("写入异常")
+        logger.error("写入异常")
     else:
-        logger.error(f"写入成功，当前寄存器值:, {response}")        
+        logger.info(f"写入成功，当前寄存器值:, {response}")        
 
 if __name__ == "__main__":
     # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
