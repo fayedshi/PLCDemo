@@ -24,7 +24,7 @@ router = APIRouter()
 
 
 @router.get("/api/tempreport")
-def show_cords_temp(request: Request, input_time: str):
+def show_cords_temp(request: Request, input_time: str, house_code: str):
     logger.info('input_time', input_time)
     influx_client=InfluxDBClient3(host=request.app.state.influx_db_url, token=request.app.state.influx_token, database="my_db")
     
@@ -40,7 +40,7 @@ def show_cords_temp(request: Request, input_time: str):
     if not input_time:
         query = f"""
             SELECT {temp_all_cols},time FROM plc_temp_data 
-            WHERE time >= NOW() - INTERVAL '1 day'
+            WHERE station_id= {house_code} and time >= NOW() - INTERVAL '1 day'
             order by time desc limit 1
             """
     else:
@@ -48,7 +48,7 @@ def show_cords_temp(request: Request, input_time: str):
         query = f"""
             SELECT {temp_all_cols}, time 
             FROM plc_temp_data 
-            WHERE time >= '{start_time}' 
+            WHERE station_id= {house_code} and time >= '{start_time}' 
             order by time asc
             limit 1
             """

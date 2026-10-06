@@ -107,9 +107,14 @@ async def get_house_cnt():
 @app.get("/api/dev-address/{house_code}")
 async def get_dev_addr_list(house_code):
     house_index = int(house_code) -1
+    asyncio.create_task(run_test())
     return settings.granaries[house_index]['devices_addr']
 
 
+async def run_test():
+    while True:
+        logger.info('running test ...')
+        await asyncio.sleep(15)
 
 if __name__ == "__main__":
     # 监听 0.0.0.0，不仅本地能访问，局域网内的手机输入电脑 IP 也能访问
