@@ -13,5 +13,13 @@
 # logger.info(temp_all_cols)
 
 cups=[5,6]
+
+json_obj=  {num: 2 for num in cups}
+print(json_obj)
+
+json_obj_arr=  [{key: val} for key, val in json_obj.items()]
+print(json_obj_arr)
 print(len(cups))
+
+
 

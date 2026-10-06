@@ -130,7 +130,7 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
     logger.info("【后端提示】发现/ws/dev-state前端客户端已连接！")
     try:
         house_index = int(house_code) -1
-        states_obj= get_dev_addr_list(house_code)['states']
+        states_obj= settings.granaries[house_index]['devices_addr']['states']
         states_buffer={}
         # logger.info(f'dev_start: {dev_start}')
         plc_client=websocket.app.state.plc_conns[house_index]
@@ -297,9 +297,9 @@ async def run_job(request: Request, data: dict):
         devices = data.get('devices')
         duration= data.get('duration')
         house_code=data.get('house_code')
-        action_obj= convert_dev_addr(devices, house_code, 1)
-        logger.info(f'house {house_code} start action obj: {action_obj}')
-        await execute_commands(request, action_obj, house_code)
+        action_obj_list= convert_dev_addr(devices, house_code, 1)
+        logger.info(f'house {house_code} start action obj: {action_obj_list}')
+        await execute_commands(request, action_obj_list, house_code)
         logger.info(f'house {house_code} 执行开启命令完毕， 先等待45s待设备完全开启')
         await asyncio.sleep(45)
         
@@ -328,9 +328,9 @@ async def run_job(request: Request, data: dict):
 # restore devices
 async def stop_job(request: Request, data: dict):
     devices = data.get('devices')
-    action_obj = convert_dev_addr(devices,data.get('house_code'), 0)
-    logger.info(f"house-{data.get('house_code')} action_obj: {action_obj}")
-    await execute_commands(request, action_obj, data.get('house_code'))
+    action_obj_list = convert_dev_addr(devices,data.get('house_code'), 0)
+    logger.info(f"house-{data.get('house_code')} action_obj: {action_obj_list}")
+    await execute_commands(request, action_obj_list, data.get('house_code'))
     logger.info(f"house-{data.get('house_code')} executed stop job commands")
 
 
@@ -664,27 +664,29 @@ async def venti_adhoc_stop(request: Request, data: dict):
     }
     
 
-async def execute_commands(request, action_obj, house_code):
+# action_obj: [{'dampers': {12: 1, 13: 1}}, {'blowers': {20: 1, 25: 1}}, {'windows': {1: 1, 4: 1}}, {'exhaustFans': {}}, {'airConditioners': {}}]
+async def execute_commands(request, action_obj_list, house_code):
     house_index = int(house_code) -1
     plc_client = request.app.state.plc_conns[house_index]
     # target_keys = ['blowers', 'exhaustFans']
-    if 'dampers' in action_obj and action_obj['dampers']:
-            # oper dampers first
-            # damper_keys=[]
-        for key,val in action_obj['dampers'].items():
-            logger.info(f'writing to dampers at {key}')
-            await request.app.state.write_single_reg(plc_client, int(key), val)
-                # await write_single_step(plc_client, key,val)
-        logger.info(f'waiting for dampers to open/close fully')
-        await asyncio.sleep(45)
+    # if 'dampers' in action_obj_list and action_obj_list['dampers']:
+    #         # oper dampers first
+    #         # damper_keys=[]
+    #     for key,val in action_obj_list['dampers'].items():
+    #         logger.info(f'writing to dampers at {key}')
+    #         await request.app.state.write_single_reg(plc_client, int(key), val)
+    #             # await write_single_step(plc_client, key,val)
+    #     logger.info(f'waiting for dampers to open/close fully')
+    #     await asyncio.sleep(45)
 
-    for key in action_obj.keys():
-        if key=='dampers':
-            continue
-        act_vals=action_obj.get(key)
+    for index, obj in enumerate(action_obj_list):
+        dev_key = list(obj.keys())[0]
+        act_vals = obj.get(dev_key)
         for key, move in act_vals.items():
             await request.app.state.write_single_reg(plc_client, int(key), move)
             await asyncio.sleep(0.05) # 微小延时
+        if dev_key =='dampers' and index==0:
+            await asyncio.sleep(45)
     # todo: shutdown dampers first
 
     
