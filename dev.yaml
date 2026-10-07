@@ -70,58 +70,66 @@ granaries:
         airConditioners:
           - 395
           - 396
-      
-  - code: '002'
-    PLC_IP: 192.168.0.20
-    PLC_PORT: 502
-    devices_addr:
-      windows:
-        - 1
-        - 10
-      # 风门
-      dampers:
-        - 11
-        - 18
-      # 风机
-      blowers:
-        - 19
-        - 26
-      # 排风扇
-      exhaustFans:
-        - 27
-        - 30  
-      # 空调
-      airConditioners:
-        - 33
-        - 34
-      temp:
-        - 35
-        - 174
-      ext-temp:
-        - 361
-      ext-humid:
-        - 362
-      humid:
-        - 175
-        - 314
+    gas_detect:
+      PLC_IP: '192.168.0.22'
+      PLC_PORT: 503
+      gas_start: 11
 
-      # 设备状态信息
-      states:
-        control:
-          - 363
-          - 364
-        windows:
-          - 365
-          - 374
-        dampers:
-          - 375
-          - 382
-        blowers:
-          - 383
-          - 390
-        exhaustFans:
-          - 391
-          - 394
-        airConditioners:
-          - 395
-          - 396
+  # - code: '002'
+  #   PLC_IP: 192.168.0.20
+  #   PLC_PORT: 502
+  #   devices_addr:
+  #     windows:
+  #       - 1
+  #       - 10
+  #     # 风门
+  #     dampers:
+  #       - 11
+  #       - 18
+  #     # 风机
+  #     blowers:
+  #       - 19
+  #       - 26
+  #     # 排风扇
+  #     exhaustFans:
+  #       - 27
+  #       - 30  
+  #     # 空调
+  #     airConditioners:
+  #       - 33
+  #       - 34
+  #     temp:
+  #       - 35
+  #       - 174
+  #     ext-temp:
+  #       - 361
+  #     ext-humid:
+  #       - 362
+  #     humid:
+  #       - 175
+  #       - 314
+
+  #     # 设备状态信息
+  #     states:
+  #       control:
+  #         - 363
+  #         - 364
+  #       windows:
+  #         - 365
+  #         - 374
+  #       dampers:
+  #         - 375
+  #         - 382
+  #       blowers:
+  #         - 383
+  #         - 390
+  #       exhaustFans:
+  #         - 391
+  #         - 394
+  #       airConditioners:
+  #         - 395
+  #         - 396
+  #   gas_detect:
+  #     PLC_IP: '192.168.0.22'
+  #     PLC_PORT: 503
+  #     gas_start: 11

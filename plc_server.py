@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 import httpx
 from config import settings
 from models import AlarmLog
-from routers import alarm_router, ca_config_router, power_router, temp_router,venti_router, home_router, gran_router
+from routers import alarm_router, ca_config_router, power_router, temp_router,venti_router, home_router, gran_router, gas_router
 from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, get_start_reg_addr, registers_to_val
 from datetime import datetime
@@ -56,7 +56,10 @@ async def lifespan(app: FastAPI):
 
     # humid and power
     app.state.global_humid_cache=[[] for _ in range(silos_cnt)]
-    app.state.global_power_cache=[[] for _ in range(silos_cnt)] 
+    app.state.global_power_cache=[[] for _ in range(silos_cnt)]
+
+    # GAS
+    app.state.global_gas_cache=[[] for _ in range(silos_cnt)]
 
     # external_temp
     app.state.external_temp=[None] * silos_cnt
@@ -108,7 +111,6 @@ async def lifespan(app: FastAPI):
 
     try:
         polling_tasks=[]
-        # plc_clients=[]
         for index, gran in enumerate(granaries):
             plc_client = AsyncModbusTcpClient(gran['PLC_IP'], port=gran['PLC_PORT'], 
                 reconnect_delay=1.0,
@@ -116,7 +118,15 @@ async def lifespan(app: FastAPI):
             )
             logger.info("【系统启动】正在尝试与 PLC 建立唯一的长连接...")
             await plc_client.connect()
-            logger.info("【lifespan】物理通道已建立")
+            logger.info(f"PLC house {gran['code']}【lifespan】物理通道已建立")
+
+            plc_client_gas = AsyncModbusTcpClient(gran['gas_detect']['PLC_IP'], port=gran['gas_detect']['PLC_PORT'], 
+                reconnect_delay=1.0,
+                reconnect_delay_max=120 
+            )
+            logger.info("【系统启动】正在尝试与 PLC_GAS的长连接...")
+            await plc_client_gas.connect()
+            logger.info(f"PLC_GAS house {gran['code']}【lifespan】物理通道已建立")
 
             app.state.plc_conns.append(plc_client)
             # logger.info(f'index: {index}')
@@ -148,12 +158,18 @@ async def lifespan(app: FastAPI):
             task_read_power=asyncio.create_task(read_power(index, plc_client, gran['code']))
             task_store_power=asyncio.create_task(store_power(index, gran['code']))
 
+            # gas concentration reading
+            task_read_gas=asyncio.create_task(read_gas(index, plc_client_gas, gran['code']))
+            task_store_gas=asyncio.create_task(store_gas(index, gran['code']))
+
             polling_tasks.extend([task_check_plc_connection, task_read_temp, task_check_alarm, 
                                     task_store_temp,
                                     task_read_humid, 
                                     task_store_humid, 
                                     task_read_power, 
-                                    task_store_power
+                                    task_store_power,
+                                    task_read_gas,
+                                    task_store_gas
                                     ]) 
         yield
 
@@ -178,6 +194,7 @@ app.include_router(temp_router.router, tags=["测温模块"])
 app.include_router(power_router.router, tags=["能耗监控模块"])
 app.include_router(alarm_router.router, tags=["报警模块"])
 app.include_router(ca_config_router.router, tags=["报警模块"])
+app.include_router(gas_router.router, tags=["气体检测模块"])
 
 # 1. 解决跨域问题（允许 Vue 前端和手机端访问）
 app.add_middleware(
@@ -468,9 +485,18 @@ async def store_power(index,  house_code):
         if(not app.state.global_power_cache[index]):
             await asyncio.sleep(2)
         await prep_store_data_cache(app.state.global_power_cache[index], house_code, 'plc_power_data','power')
-        # await prep_store_data_cache(humid_cache, house_code, 'plc_humid_data','humid')
         logger.info(f'【house-{house_code}能耗数据存储成功】')
         await asyncio.sleep(GLOBAL_STORE_INTERVAL)
+
+
+async def store_gas(index, house_code):
+    while True:
+        if(not app.state.global_gas_cache[index]):
+            await asyncio.sleep(2)
+        await prep_store_data_cache(app.state.global_gas_cache[index], house_code, 'plc_gas_data','gas')
+        logger.info(f'【house-{house_code}气体检测数据存储成功】')
+        await asyncio.sleep(GLOBAL_STORE_INTERVAL)
+
 
 # await prep_store_data_cache(data, house_code, 'plc_power_data','power')
 # async def process_humid(index, plc_client, house_code):
@@ -558,9 +584,30 @@ async def read_power(index, plc_client, house_code):
             app.state.global_power_cache[index] = data
             logger.info(f'data: {data},能耗数据: {app.state.global_power_cache[index]}')
         except Exception as e:
-            logger.error(f'house-{house_code}############## poll_and_store_power 发生异常: {e}')
+            logger.error(f'house-{house_code}############## read_power 发生异常: {e}')
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
+
+async def read_gas(index, plc_client, house_code):
+    while True:
+        try:
+            logger.info('in read_gas')
+            
+            gas_start =settings.granaries[index]['gas_detect']['gas_start']
+            logger.info(f'gas start: {gas_start}')
+            raw_regs=await partial_read(plc_client,gas_start,69)
+            logger.info(f'raw_regs, {raw_regs}')
+            for indx, reg in enumerate(raw_regs):
+                if indx<32 or indx in (64,65):
+                    raw_regs[indx] = round(raw_regs[indx] / 10, 1)
+            # raw_regs[64] = round(raw_regs[64] /10,1)
+            # raw_regs[65] = round(raw_regs[65] /10,1)
+
+            app.state.global_gas_cache[index] = raw_regs
+            logger.info(f'house-{house_code}气体检测数据: {app.state.global_gas_cache[index]}')
+        except Exception as e:
+            logger.error(f'house-{house_code}############## read_gas 发生异常: {e}')
+        await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 async def prep_store_data_cache(data_cache, house_code, table, field_prefix):
     try:

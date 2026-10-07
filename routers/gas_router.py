@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Request, Query
+import asyncio
+
+from fastapi import APIRouter, Request, Query, WebSocket
 
 from datetime import timedelta
 
@@ -21,6 +23,21 @@ from logger.demo_logger import logger
 
 # router = APIRouter(prefix="/gran", tags=["仓房管理模块"])
 router = APIRouter()
+
+
+@router.websocket("/ws/gas/{gran_code}")
+async def websocket_endpoint(websocket: WebSocket, gran_code: str):
+    house_index=None
+    await websocket.accept()
+    print(f"【后端提示】/ws/gas前端house-{gran_code}客户端已连接！")
+    try:
+        house_index = int(gran_code) -1
+        while True:
+            await websocket.send_json(websocket.app.state.global_gas_cache[house_index])
+            # send to vue every 2 sec
+            await asyncio.sleep(5)
+    except Exception as e:
+        print(f"客户端/ws/gas断开连接house-{gran_code}: {e}")
 
 
 @router.get("/api/tempreport")

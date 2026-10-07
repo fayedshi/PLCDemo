@@ -173,25 +173,25 @@ async def control_window(request: Request, data: dict):
                     "status": "busy", 
                     "message": f"该设备被仓房{house_index+1} 通风作业占用，请稍后再试！"
                 }
-    async with plc_lock:
-        try:
-            plc_client=request.app.state.plc_conns[house_index]
-            if dev_id:
-                dev_info = dev_id.split('-')
-                # dev_info 为 blowers-7形式
-                offset= get_start_reg_addr(settings.granaries[house_index], dev_info[0])
-                target_addr=int(dev_info[1]) + offset
-                await request.app.state.write_single_reg(plc_client, target_addr, action_type)
-                logger.info(f'写入PLC成功，设备id {dev_id}，动作 {action_type}')
-            else:
-                # batch devices
-                batch_dev_address={'window':31,'door':32}
-                category_type = data.get('category_type')
-                await request.app.state.write_single_reg(plc_client, batch_dev_address[category_type], action_type)
-                logger.info(f'写入PLC全控设备{category_type}成功')
-        except Exception as e:
-            logger.info(f"/api/dev/control 写入PLC异常: {e}")
-        return {"status":"success"}
+    # async with plc_lock: no lock needed
+    try:
+        plc_client=request.app.state.plc_conns[house_index]
+        if dev_id:
+            dev_info = dev_id.split('-')
+            # dev_info 为 blowers-7形式
+            offset= get_start_reg_addr(settings.granaries[house_index], dev_info[0])
+            target_addr=int(dev_info[1]) + offset
+            await request.app.state.write_single_reg(plc_client, target_addr, action_type)
+            logger.info(f'写入PLC成功，设备id {dev_id}，动作 {action_type}')
+        else:
+            # global execution for batch devices 
+            batch_dev_address={'window':31,'door':32}
+            category_type = data.get('category_type')
+            await request.app.state.write_single_reg(plc_client, batch_dev_address[category_type], action_type)
+            logger.info(f'写入PLC全控设备{category_type}成功')
+    except Exception as e:
+        logger.info(f"house-{data.get('house_code')} /api/dev/control 写入PLC异常: {e}")
+    return {"status":"success"}
 
 
 @router.post("/api/venti/adhoc/start")
@@ -329,7 +329,7 @@ async def run_job(request: Request, data: dict):
 async def stop_job(request: Request, data: dict):
     devices = data.get('devices')
     action_obj_list = convert_dev_addr(devices,data.get('house_code'), 0)
-    logger.info(f"house-{data.get('house_code')} action_obj: {action_obj_list}")
+    logger.info(f"stop_job(): house-{data.get('house_code')} action_obj: {action_obj_list}")
     await execute_commands(request, action_obj_list, data.get('house_code'))
     logger.info(f"house-{data.get('house_code')} executed stop job commands")
 
@@ -682,12 +682,14 @@ async def execute_commands(request, action_obj_list, house_code):
     for index, obj in enumerate(action_obj_list):
         dev_key = list(obj.keys())[0]
         act_vals = obj.get(dev_key)
+        if not act_vals:
+            continue
         for key, move in act_vals.items():
             await request.app.state.write_single_reg(plc_client, int(key), move)
             await asyncio.sleep(0.05) # 微小延时
         if dev_key =='dampers' and index==0:
             await asyncio.sleep(45)
-    # todo: shutdown dampers first
+
 
     
 # async def stop_adhoc(request, action_obj, house_code):

@@ -20,7 +20,33 @@ async def run_ca_job_pipeline(job_id: int, delay_seconds: float):
         # 否则更新状态为 1 (运行中)，读取时长参数，通过 asyncio.sleep 执行环流和排气...
         print(f"🎬 [后台任务] 时间已到，正式拉起 Job ID: {job_id}")
         # ...执行和之前类似的 PLC 读写和时长的 asyncio.sleep(...) 控制...
-
+    async def switch_stage_and_valves(job_id, current_stage, executor):
+    # """
+    # 状态机切换阶段时，一键重组所有阀门和风机
+    # """
+        if current_stage == "抽空检测":
+            executor.set_valves(v_top_in=0, v_bottom_out=1, v_loop=0)
+            executor.control_fan("VACUUM", "START")
+            
+        elif current_stage == "充氮置换": # 真正的上充下排
+            executor.set_valves(v_top_in=1, v_bottom_out=1, v_loop=0)
+            executor.control_fan("NITROGEN_SOURCE", "START")
+            
+        elif current_stage == "环流均匀":
+            # 必须先停气源，再关对外的阀门，最后开环流
+            executor.control_fan("NITROGEN_SOURCE", "STOP")
+            executor.set_valves(v_top_in=0, v_bottom_out=0, v_loop=1)
+            executor.control_fan("CIRCULATION", "START")
+            
+        elif current_stage == "浓度保持":
+            # 休眠状态，关闭所有，等待定时或阈值触发
+            executor.control_fan("CIRCULATION", "STOP")
+            executor.set_valves(v_top_in=0, v_bottom_out=0, v_loop=0)
+            
+        elif current_stage == "排气恢复":
+            executor.set_valves(v_top_in=1, v_bottom_out=1, v_loop=0) # 或者开启专用大排气阀
+            executor.control_fan("EXHAUST_FAN", "START")
+    
 # 🚀 2. 接口调用
 @ca_job_router.post("/jobs/launch")
 async def launch_ca_job(payload: CAJobCreateSchema, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
