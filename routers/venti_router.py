@@ -688,6 +688,7 @@ async def execute_commands(request, action_obj_list, house_code):
             await request.app.state.write_single_reg(plc_client, int(key), move)
             await asyncio.sleep(0.05) # 微小延时
         if dev_key =='dampers' and index==0:
+            logger.info('To close dampers first and wait 45s ... ')
             await asyncio.sleep(45)
 
 

@@ -64,7 +64,7 @@ def show_cords_temp(request: Request, input_time: str, house_code: str):
             return pd.DataFrame()
         # 将 PyArrow Table 转换为 Pandas DataFrame 以便后续分析
         df = table.to_pandas()
-        logger.info('found data\n',df)
+        logger.info(f'found data, {df}')
         logger.info(f"查询到 {len(df)} 条数据")
         # logger.info('df.head: ',df.head())
         return df.to_dict(orient="records")[0]
@@ -77,7 +77,7 @@ def show_cords_temp(request: Request, input_time: str, house_code: str):
 @router.get("/api/temp-trend")
 def get_history_data(request: Request,start_time: str,end_time: str, layer: int, options: list[str] = Query([])):
     influx_client=InfluxDBClient3(host=request.app.state.influx_db_url, token=request.app.state.influx_token, database="my_db")
-    logger.info('start_time',start_time,'options', options)
+    logger.info(f'start_time: {start_time},options: {options}')
     # 1. 动态生成 140 个列名的列表：['temp0', 'temp1', ..., 'temp139']
     
     step = 1 if layer == -1 else 4
@@ -119,7 +119,7 @@ def get_history_data(request: Request,start_time: str,end_time: str, layer: int,
     start = to_utctime(start_time)
     end = to_utctime(end_time)
 
-    logger.info(f'sql to execute {clauses_str}')
+    # logger.info(f'sql to execute {clauses_str}')
 # -- 1. InfluxDB v3 核心函数：将时间戳按 1 小时(INTERVAL '1 HOUR')对齐，作为前端 X 轴时间
     query = f"""
         SELECT 
@@ -144,7 +144,7 @@ def get_history_data(request: Request,start_time: str,end_time: str, layer: int,
             return pd.DataFrame()
         # 将 PyArrow Table 转换为 Pandas DataFrame 以便后续分析
         df = table.to_pandas()
-        logger.info('found data\n',df)
+        logger.info(f'found data, {df}')
         # logger.info(f"查询到 {len(df)} 条数据")
         df['time'] = pd.to_datetime(df['chart_time']) + timedelta(hours=8)
         df['time'] = df['time'].dt.strftime('%y-%m-%d %H:%M')

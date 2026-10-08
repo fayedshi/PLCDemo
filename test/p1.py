@@ -15,11 +15,17 @@ if __name__ == "__main__":
        print(True)
 
     js_obj= {6:'apple',8:'doe'}
-   
+    
+    print(list(js_obj.values()))
+
     key_list=  [_key for _key in js_obj.keys()]
 
     print(key_list)
 
     for key in js_obj.keys():
         print(f'my key: {key}')
+
+    js={}
+    if not js:
+        print('test ok')
 
