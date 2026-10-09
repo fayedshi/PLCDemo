@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 import httpx
 from config import settings
 from models import AlarmLog
-from routers import alarm_router, ca_config_router, power_router, temp_router,venti_router, home_router, gran_router, gas_router
+from routers import alarm_router, ca_config_router, power_router, temp_router,venti_router, home_router, gran_router, gas_router, video_router
 from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, get_start_reg_addr, registers_to_val
 from datetime import datetime
@@ -195,6 +195,7 @@ app.include_router(power_router.router, tags=["能耗监控模块"])
 app.include_router(alarm_router.router, tags=["报警模块"])
 app.include_router(ca_config_router.router, tags=["报警模块"])
 app.include_router(gas_router.router, tags=["气体检测模块"])
+app.include_router(video_router.router, tags=["安防监控模块"])
 
 # 1. 解决跨域问题（允许 Vue 前端和手机端访问）
 app.add_middleware(

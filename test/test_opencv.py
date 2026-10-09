@@ -4,14 +4,14 @@ import time
 def connect_hikvision_rtsp():
     # 1. 配置海康摄像头的参数（根据你的实际情况修改）
     USER = "admin"
-    PASSWORD = "123456"           # 你的摄像头密码
-    IP = "192.168.0.243"            # 你的摄像头IP
+    PASSWORD = "LC1314pp"           # 你的摄像头密码
+    IP = "192.168.0.241"            # 你的摄像头IP
     PORT = "554"
     
     # 2. 拼接完整的 RTSP URL (这里采用 H.264 主码流)
     # rtsp_url = f"rtsp://{USER}:{PASSWORD}@{IP}:{PORT}/h264/ch1/main/av_stream"
     # rtsp_url = f"rtsp://{IP}:{PORT}/h264/ch1/main/av_stream"
-    rtsp_url = f"rtsp://{IP}:{PORT}/Streaming/Channels/101"
+    rtsp_url = f"rtsp://{USER}:{PASSWORD}@{IP}:{PORT}/Streaming/Channels/101"
     print(f"正在连接海康威视 RTSP 流: {rtsp_url}")
 
     # 3. 创建视频捕获对象
