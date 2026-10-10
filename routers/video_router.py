@@ -1,11 +1,10 @@
 import asyncio
-import subprocess
-from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
-from typing import Dict, List
+from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from logger.demo_logger import logger
-# app = FastAPI()
-
-# 🛠️ NVR 基础配置
+from config import settings
+import requests
+from requests.auth import HTTPDigestAuth
+import xml.etree.ElementTree as ET
 
 router = APIRouter()
 
@@ -13,169 +12,161 @@ NVR_USER = "admin"
 NVR_PASS = "LC1314pp"
 NVR_IP = "192.168.0.241"
 
-# 管理结构：{ "102": [ws1, ws2], "202": [ws3] }
-channel_connections: Dict[str, List[WebSocket]] = {}
-# 进程结构：{ "102": ffmpeg_process_1, "202": ffmpeg_process_2 }
-ffmpeg_processes: Dict[str, subprocess.Popen] = {}
+# 全局状态管理字典
+channel_connections = {}  # { "live_101": [ws1, ws2] }
+ffmpeg_tasks = {}         # { "live_101": asyncio.Task } （存放异步读流任务对象）
 
-def start_ffmpeg_for_channel(channel: str):
-    """为特定通道启动独立的 FFmpeg 进程"""
-    logger.info('转码开始 start_ffmpeg_for_channel')
-    if channel in ffmpeg_processes:
-        return # 已经启动过了，不再重复启动
+def get_rtsp_url(channel: str) -> str:
+    return f"rtsp://{NVR_USER}:{NVR_PASS}@{NVR_IP}:554/Streaming/Channels/{channel}"
 
-    rtsp_url = f"rtsp://{NVR_USER}:{NVR_PASS}@{NVR_IP}:554/Streaming/Channels/{channel}"
-    # rtsp_url = f"rtsp://{USER}:{PASSWORD}@{IP}:{PORT}/Streaming/Channels/102"
-    
-    cmd = [
-    'ffmpeg', 
-    '-rtsp_transport', 'tcp', 
-    '-i', rtsp_url,
-    '-f', 'mpegts', 
-    '-codec:v', 'mpeg1video',
-    '-tune', 'zerolatency',
-    '-g', '5',                 # 每 5 帧强行插入一个全量 I 帧，防止卡主
-    '-flush_packets', '1',     # 有数据立刻冲刷发送
-    '-s', '1280*720',           # ⭐ 必须强制为偶数分辨率！
-    '-bf', '0', 
-    '-r', '20', 
-    '-an', 
-    '-'
-    ]
+async def start_async_ffmpeg_engine(channel_key: str, rtsp_url: str):
+    """
+    ⭐ 核心重构：利用 asyncio 原生异步子进程代替多线程
+    纯单线程异步驱动，利用操作系统的异步 I/O，绝不产生多线程死锁
+    """
+    if channel_key in ffmpeg_tasks:
+        return
 
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    ffmpeg_processes[channel] = process
-    print(f"▶️ NVR 通道 {channel} 的 FFmpeg 转码进程已启动")
-
-    # 异步启动该通道的数据读取循环
-    logger.info('异步启动该通道的数据读取循环')
-    asyncio.create_task(ffmpeg_reader_loop(channel))
-
-async def ffmpeg_reader_loop(channel: str):
-    """持续读取特定通道的 FFmpeg 数据并分发"""
-    loop = asyncio.get_event_loop()
-    while True:
-        process = ffmpeg_processes.get(channel)
-        # 如果这个通道已经没有网页观看了，主动关闭 FFmpeg 进程，释放服务器 CPU
-        if channel not in channel_connections or not channel_connections[channel]:
-            if process:
-                process.terminate()
-                ffmpeg_processes.pop(channel, None)
-                print(f"⏹️ 无人观看，已释放 NVR 通道 {channel} 的转码进程")
-                break
-        # logger.info('==========>sendding video data')
-        if process and process.stdout:
-            data = await loop.run_in_executor(None, process.stdout.read, 4096)
-            if data and channel in channel_connections:
-                # logger.info('==========>real sending')
-                # 📢 只广播给订阅了当前通道的 WebSocket 客户端
-                tasks = [ws.send_bytes(data) for ws in channel_connections[channel]]
-                if tasks:
-                    # logger.info(f'tasks: {tasks}')
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                    # await asyncio.sleep(0.5)
-            else:
-                await asyncio.sleep(0.01)
-        else:
-            await asyncio.sleep(1)
-
-# @router.get("/stream/nvr/{channel}")
-# async def handle_jsmpeg_probe(channel: str, response: Response):
-#     """专门应答 jsmpeg 的 HTTP 0-21 字节探测，防止其报 404"""
-#     # 告诉前端播放器：我们支持这个视频流，允许接下来建立 WebSocket 连接
-#     response.headers["Content-Type"] = "video/mp4" # 或者 "application/octet-stream"
-#     response.headers["Access-Control-Allow-Origin"] = "*" # 防止跨域问题
-#     # 返回一段空的二进制，满足它的前段字节读取需求
-#     return Response(content=b'\x00' * 22, status_code=200)
-
-# @router.route("/stream/nvr/{channel}", methods=["GET", "HEAD"])
-# async def handle_jsmpeg_probe(channel: str):  # ⭐ 关键修改：删掉括号里的 response: Response
-#     """一劳永逸应答 jsmpeg 的 HTTP 探测，阻止 404/405 报错"""
-    
-#     # 直接在内部构建并返回 Response 对象
-#     return Response(
-#         content=b'\x00' * 22, 
-#         status_code=200,
-#         headers={
-#             "Content-Type": "video/mp4",
-#             "Access-Control-Allow-Origin": "*"  # 防止跨域问题
-#         }
-#     )
-
-# @router.head("/stream/nvr/{channel}")
-# async def handle_jsmpeg_head_probe(channel: str):
-#     """完美应答 jsmpeg 的 HEAD 探测，只回 Headers，不声明 request 变量，绝不报错"""
-#     return Response(
-#         status_code=200,
-#         headers={
-#             "Content-Type": "video/mp4",
-#             "Accept-Ranges": "bytes",
-#             "Access-Control-Allow-Origin": "*",
-#             "Content-Length": "1485760",
-#         }
-#     )
-
-@router.get("/stream/nvr/{channel}")
-async def handle_jsmpeg_probe(channel: str):
-    """顺从 jsmpeg 探测机制：返回真实符合 MPEG-TS 静态特征的数据头，不引发解复用崩溃"""
-    logger.info(f'inside handle_jsmpeg_probe')
-    rtsp_url = f"rtsp://{NVR_USER}:{NVR_PASS}@{NVR_IP}:554/Streaming/Channels/{channel}"
-    
-    # 1. 启动一个临时或持久的探测命令
     cmd = [
         'ffmpeg', '-rtsp_transport', 'tcp', '-i', rtsp_url,
         '-f', 'mpegts', '-codec:v', 'mpeg1video',
-        '-s', '640x480', '-bf', '0', '-r', '20', '-an', '-'
+        '-tune', 'zerolatency', '-g', '5', '-flush_packets', '1',
+        '-s', '640x360', '-bf', '0', '-r', '20', '-an', '-'
     ]
-    
-    try:
-        # 2. 异步启动进程，准备读取其标准输出
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        
-        # 3. 阻塞读取前 4096 字节的数据（这其中 100% 包含了真实的 PAT、PMT 视频流元数据）
-        # 给定 3 秒超时限制，防止海康 NVR 离线导致接口死锁
-        loop = asyncio.get_event_loop()
-        real_video_header = await loop.run_in_executor(None, process.stdout.read, 4096)
-        # logger.info(f'got video header: {real_video_header}')
-        # 4. 立即安全关闭这个探测进程（它已经完成了嗅探使命）
-        process.terminate()
-        
-        if not real_video_header:
-            return Response(status_code=500, content="无法从海康 NVR 获取视音频流元数据")
 
-        # 5. 将海康摄像头吐出的【真实视频头】原封不动返回给前端 jsmpeg
-        return Response(
-            content=real_video_header,
-            status_code=200,
-            headers={
-                "Content-Type": "video/mp4",
-                "Accept-Ranges": "bytes",
-                "Content-Length": str(len(real_video_header))
-            }
-        )
-    except Exception as e:
-        print(f"❌ 嗅探通道 {channel} 发生严重错误: {e}")
-        return Response(status_code=500, content=str(e))
-    
+    # 1. 异步启动 FFmpeg 子进程
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL
+    )
+    print(f"▶️ 异步 FFmpeg 进程启动，绑定 Key: {channel_key}")
 
+    async def async_stream_pump():
+        """非阻塞异步数据泵：完全在单线程事件循环中通过 await 异步抽水"""
+        try:
+            while process.returncode is None:
+                # ⭐ 纯异步非阻塞读取 32KB 数据，绝不锁死主线程
+                data = await process.stdout.read(32768)
+                if not data:
+                    break
+                
+                # 如果当前通道已经没人看了，主动切断
+                if channel_key not in channel_connections or not channel_connections[channel_key]:
+                    break
 
-@router.websocket("/stream/nvr/{channel}")
-async def websocket_endpoint(websocket: WebSocket, channel: str):
-    logger.info('in stream endpoint')
+                # 异步广播给当前订阅该通道的所有网页客户端
+                if channel_key in channel_connections:
+                    tasks = [ws.send_bytes(data) for ws in channel_connections[channel_key]]
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception as e:
+            print(f"❌ 通道 {channel_key} 异步分发发生异常: {e}")
+        finally:
+            # 2. 完美的善后关闭闭环
+            try:
+                process.terminate()
+                await process.wait()
+            except:
+                pass
+            ffmpeg_tasks.pop(channel_key, None)
+            print(f"⏹️ 纯异步进程已彻底安全释放，Key: {channel_key}")
+
+    # 3. 将这个读流分发循环挂载为当前事件循环的后台异步 Task
+    ffmpeg_tasks[channel_key] = asyncio.create_task(async_stream_pump())
+
+# 🌐 路由 1：处理实时视频流
+@router.websocket("/stream/live/{channel}")
+async def websocket_live(websocket: WebSocket, channel: str):
     await websocket.accept()
+    channel_key = f"live_{channel}"
     
-    # 将连接归类到对应的通道列表中
-    if channel not in channel_connections:
-        channel_connections[channel] = []
-    channel_connections[channel].append(websocket)
+    if channel_key not in channel_connections:
+        channel_connections[channel_key] = []
+    channel_connections[channel_key].append(websocket)
     
-    # 动态触发启动该通道的 FFmpeg
-    start_ffmpeg_for_channel(channel)
+    rtsp_url = get_rtsp_url(channel)
+    # 直接触发纯异步引擎
+    await start_async_ffmpeg_engine(channel_key, rtsp_url)
     
     try:
         while True:
-            await websocket.receive_text() # 维持心跳
+            await websocket.receive_text()  # 维持心跳
     except WebSocketDisconnect:
-        channel_connections[channel].remove(websocket)
-        if not channel_connections[channel]:
-            channel_connections.pop(channel, None)
+        channel_connections[channel_key].remove(websocket)
+
+# 🌐 路由 2：处理历史录像回放流
+@router.websocket("/stream/playback/{channel}")
+async def websocket_playback(websocket: WebSocket, channel: str, start_time: str):
+    await websocket.accept()
+    channel_key = f"pb_{channel}_{hash(websocket)}"
+    
+    if channel_key not in channel_connections:
+        channel_connections[channel_key] = []
+    channel_connections[channel_key].append(websocket)
+    
+    # 2026-10-07T18:00:00Z ->starttime=20261007t180000z
+    # 规整海康回放时间格式 2026/10/8 020500
+    # hk_time = start_time.replace("-", "").replace(":", "").lower()
+    playback_url = f"rtsp://{NVR_USER}:{NVR_PASS}@{NVR_IP}:554/Streaming/tracks/{channel}?starttime={start_time}"
+    print(f"🎬 异步唤醒回放流: {playback_url}")
+    
+    await start_async_ffmpeg_engine(channel_key, playback_url)
+    
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        channel_connections[channel_key].remove(websocket)
+        if channel_key in channel_connections:
+            channel_connections.pop(channel_key, None)
+
+
+@router.get("/api/nvr/channels")
+async def get_channel_list():
+    nvr_config_list= settings.raw_config['NVR_LIST']
+    print(nvr_config_list)
+    nvr_channels=[]
+    for nvr_config in nvr_config_list:
+        channel_config=load_nvr(nvr_config)
+        nvr_channels.append(channel_config)
+    logger.info(f'all channels: {nvr_channels}')
+    return nvr_channels
+
+
+def load_nvr(config):
+    nvr_ip = config['IP']
+    NVR_USER = config["USER"]
+    NVR_PASS = config['PASSWORD']
+    # NVR_PORT= config['PORT']
+
+    # NVR_IP = "192.168.1.64"  # 替换为你的NVR IP
+    # username = "admin"
+    # password = "YOUR_PASSWORD"
+    url = f"http://{nvr_ip}/ISAPI/ContentMgmt/InputProxy/channels"
+    print(url)
+    try:
+        # 海康ISAPI必须使用 HTTP 摘要认证 (Digest Auth)
+        response = requests.get(url, auth=HTTPDigestAuth(NVR_USER, NVR_PASS), timeout=5)
+        # print(f'response: {response.text}')
+        if response.status_code == 200:
+            # 解析返回的 XML 数据
+            root = ET.fromstring(response.text)
+            
+            # 海康的命名空间标签头
+            ns = {'hk': 'http://www.hikvision.com/ver20/XMLSchema'}
+            
+            print(f"{'通道ID':<10}{'通道名称':<20}")
+            print("-" * 30)
+            channel_json={}
+            # 遍历所有输入通道
+            for channel in root.findall('.//hk:InputProxyChannel', ns):
+                channel_id = channel.find('hk:id', ns).text
+                channel_name = channel.find('hk:name', ns).text
+                channel_json[channel_id]=channel_name
+                print(f"{channel_id:<10}{channel_name:<20}")
+            return channel_json
+        else:
+            print(f"请求失败，状态码: {response.status_code}，请检查密码或NVR服务是否开启。")
+    except Exception as e:
+        print(f"连接 NVR 发生异常: {e}")

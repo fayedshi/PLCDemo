@@ -95,6 +95,8 @@ def get_history_data(request: Request,start_time: str,end_time: str, layer: int,
     avg_temp_clause= f"ROUND(AVG(({str_temp_sum}) / {partial_len})/10.0, 1) AS avg_temp"
             
     clauses=[]
+    temp_clauses=[]
+    humid_clauses=[]
     
     humid_cols = [f"humid{i}" for i in range(start_index, full_len, step)]
     str_humid_sum = " + ".join(humid_cols)
@@ -104,34 +106,70 @@ def get_history_data(request: Request,start_time: str,end_time: str, layer: int,
     avg_humid_clause= f"ROUND(AVG(({str_humid_sum}) / {partial_len})/10.0, 1) AS avg_humid"
 
     if 'min' in options:
-        clauses.append(min_temp_clause)
-        clauses.append(min_humid_clause)
+        # clauses.append(min_temp_clause)
+        # clauses.append(min_humid_clause)
+        temp_clauses.append(min_temp_clause)
+        humid_clauses.append(min_humid_clause)
 
     if 'avg' in options:
-        clauses.append(avg_temp_clause)
-        clauses.append(avg_humid_clause)
+        # clauses.append(avg_temp_clause)
+        # clauses.append(avg_humid_clause)
+        temp_clauses.append(avg_temp_clause)
+        humid_clauses.append(avg_humid_clause)
 
     if 'max' in options:
-        clauses.append(max_temp_clause)
-        clauses.append(max_humid_clause)
+        # clauses.append(max_temp_clause)
+        # clauses.append(max_humid_clause)
+        temp_clauses.append(max_temp_clause)
+        humid_clauses.append(max_humid_clause)
 
     clauses_str= ", ".join(clauses)
+    temp_clause_str= ", ".join(temp_clauses)
+    humid_clause_str= ", ".join(humid_clauses)
     start = to_utctime(start_time)
     end = to_utctime(end_time)
 
-    # logger.info(f'sql to execute {clauses_str}')
-# -- 1. InfluxDB v3 核心函数：将时间戳按 1 小时(INTERVAL '1 HOUR')对齐，作为前端 X 轴时间
+    # query = f"""
+    #     SELECT 
+    #         {clauses_str},
+    #         DATE_BIN(INTERVAL '10 minutes', a.time, TIMESTAMP '1970-01-01 00:00:00') chart_time 
+    #     FROM plc_temp_data a left join plc_humid_data b 
+    #         on DATE_BIN(INTERVAL '10 minutes', a.time, TIMESTAMP '1970-01-01 00:00:00')=DATE_BIN(INTERVAL '10 minutes', b.time, TIMESTAMP '1970-01-01 00:00:00') 
+    #     where 
+    #         a.time between '{start}' AND '{end}' 
+    #         AND b.time BETWEEN '{start}' AND '{end}' 
+    #         and a.temp0 is not null
+    #     group by chart_time 
+    #     order by chart_time ASC
+    #     """
     query = f"""
+        WITH temp_aligned AS (
+            SELECT 
+                {temp_clause_str},
+                DATE_BIN(INTERVAL '10 minutes', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time
+            FROM plc_temp_data
+            WHERE time BETWEEN '{start}' AND '{end}' AND temp0 IS NOT NULL
+            GROUP BY chart_time
+        ),
+        humid_aligned AS (
+            SELECT 
+                {humid_clause_str},
+                DATE_BIN(INTERVAL '10 minutes', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time
+            FROM plc_humid_data
+            WHERE time BETWEEN '{start}' AND '{end}' 
+            GROUP BY chart_time
+        )
+        
         SELECT 
-            {clauses_str},
-            DATE_BIN(INTERVAL '10 minutes', a.time, TIMESTAMP '1970-01-01 00:00:00') chart_time 
-        FROM plc_temp_data a left join plc_humid_data b 
-            on DATE_BIN(INTERVAL '10 minutes', a.time, TIMESTAMP '1970-01-01 00:00:00')=DATE_BIN(INTERVAL '10 minutes', b.time, TIMESTAMP '1970-01-01 00:00:00') 
-        where 
-            a.time between '{start}' AND '{end}' and a.temp0 is not null
-        group by chart_time 
-        order by chart_time ASC
-        """
+            
+            a.avg_temp, b.avg_humid,
+            
+            a.chart_time
+        FROM temp_aligned a
+        LEFT JOIN humid_aligned b ON a.chart_time = b.chart_time 
+        
+        ORDER BY a.chart_time ASC
+    """
 
     # 3. 执行查询并转换数据
     try:
@@ -148,11 +186,7 @@ def get_history_data(request: Request,start_time: str,end_time: str, layer: int,
         # logger.info(f"查询到 {len(df)} 条数据")
         df['time'] = pd.to_datetime(df['chart_time']) + timedelta(hours=8)
         df['time'] = df['time'].dt.strftime('%y-%m-%d %H:%M')
-        # df['avg_temp'] = (df['avg_temp']/10).round(1)
-        # df['max_temp'] = (df['max_temp']/10).round(1)
-        # df['avg_humid'] = (df['avg_humid']/10).round(1)
-        
-        # df['max_humid'] = (df['max_humid']/10).round(1)
+     
         
         # 5. 核心：只筛选前端需要的 4 列
         # final_df = df[['time', 'avg', 'min', 'max']]

@@ -9,6 +9,13 @@ tags:
   - "dev"
   - "web"
 
+NVR_LIST:
+  - IP: 192.168.0.241
+    USER: 'admin'
+    PASSWORD: 'LC1314pp'
+    PORT: 554
+
+
 INFLUX_DB:
   URL: http://localhost:8181
   TOKEN: apiv3_ntcKjOE7rToG5Z9tcxJ9XQj1_8Bm-ANFgIECpNtyhPeBuSJstAglB_pF1awNFt9oUcCZL4Og9kwd3wnMDG29gQ

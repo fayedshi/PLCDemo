@@ -1,3 +1,5 @@
+import sys
+
 import uvicorn
 import asyncio
 from fastapi import FastAPI
@@ -25,12 +27,6 @@ DATABASE_NAME='my_db'
 GLOBAL_POLLING_INTERVAL=300
 GLOBAL_STORAGE_INTERVAL=300
 
-# todo: 写在配置文件里
-# dev_start_address={'win':1,'door':11,'fan':19,'exhaust':27,'ac':33}
-
-
-
-window_state = {"status": "stopped"}
 
 config_data=settings.raw_config
 # granaries = config_data.get('granaries', [])
@@ -39,16 +35,11 @@ silos_cnt=len(granaries)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # app.state.plc_ip= os.getenv("PLC_IP", "127.0.0.1")
-    # app.state.plc_port=os.getenv("PLC_PORT")
     logger.info(f'silo_cnt: {silos_cnt}')
-    
-    # app.state.num_ticks = [1] * silos_cnt
     app.state.dev_addrs_objects=[]
 
     # plc Lock
     app.state.plc_locks = [asyncio.Lock() for _ in range(silos_cnt)]
-
 
     # temp
     app.state.global_plc_cache = [[] for _ in range(silos_cnt)]
@@ -112,12 +103,12 @@ async def lifespan(app: FastAPI):
     try:
         polling_tasks=[]
         for index, gran in enumerate(granaries):
-            plc_client = AsyncModbusTcpClient(gran['PLC_IP'], port=gran['PLC_PORT'], 
+            plc_client_main = AsyncModbusTcpClient(gran['PLC_IP'], port=gran['PLC_PORT'], 
                 reconnect_delay=1.0,
                 reconnect_delay_max=120 
             )
             logger.info("【系统启动】正在尝试与 PLC 建立唯一的长连接...")
-            await plc_client.connect()
+            await plc_client_main.connect()
             logger.info(f"PLC house {gran['code']}【lifespan】物理通道已建立")
 
             plc_client_gas = AsyncModbusTcpClient(gran['gas_detect']['PLC_IP'], port=gran['gas_detect']['PLC_PORT'], 
@@ -127,8 +118,9 @@ async def lifespan(app: FastAPI):
             logger.info("【系统启动】正在尝试与 PLC_GAS的长连接...")
             await plc_client_gas.connect()
             logger.info(f"PLC_GAS house {gran['code']}【lifespan】物理通道已建立")
+            plc_clients = [plc_client_main, plc_client_gas]
 
-            app.state.plc_conns.append(plc_client)
+            app.state.plc_conns.append(plc_client_main)
             # logger.info(f'index: {index}')
             # app.state.num_ticks[index]=1
             # 从数据库中读取该仓房的温度报警上限
@@ -140,22 +132,21 @@ async def lifespan(app: FastAPI):
                 raise Exception('【ERROR：无法读取仓房温度上限】')
             
             # 从配置文件中读取设备地址
-            # dev_addrs = load_device_addr()
             logger.info(f'current gran {gran}')
             app.state.dev_addrs_objects.append(gran['devices_addr'])
             logger.info(app.state.dev_addrs_objects)
             
             # polling_job = asyncio.create_task(plc_polling_task(index, plc_client, gran['code']))
 
-            task_check_plc_connection=asyncio.create_task(check_plc_connection(index, plc_client, gran['code']))
-            task_read_temp=asyncio.create_task(read_temp(index, plc_client, gran['code']))
+            task_check_plc_connection=asyncio.create_task(check_plc_connection(index, plc_clients, gran['code']))
+            task_read_temp=asyncio.create_task(read_temp(index, plc_client_main, gran['code']))
             task_check_alarm =asyncio.create_task(check_temp_alarm('TEMP_HIGH', gran['code'], index))
             task_store_temp=asyncio.create_task(store_temp(index, gran['code']))
 
-            task_read_humid=asyncio.create_task(read_humid(index, plc_client, gran['code']))
+            task_read_humid=asyncio.create_task(read_humid(index, plc_client_main, gran['code']))
             task_store_humid=asyncio.create_task(store_humid(index, gran['code']))
             
-            task_read_power=asyncio.create_task(read_power(index, plc_client, gran['code']))
+            task_read_power=asyncio.create_task(read_power(index, plc_client_main, gran['code']))
             task_store_power=asyncio.create_task(store_power(index, gran['code']))
 
             # gas concentration reading
@@ -182,9 +173,9 @@ async def lifespan(app: FastAPI):
             await asyncio.gather(*polling_tasks)
         except asyncio.CancelledError:# interupted exception
             pass
-        for plc_client in app.state.plc_conns:
-            plc_client.close()
-            logger.info(f"###{plc_client}采集任务已停止，与PLC的连接已释放完毕")
+        for plc_client_main in app.state.plc_conns:
+            plc_client_main.close()
+            logger.info(f"###{plc_client_main}采集任务已停止，与PLC的连接已释放完毕")
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(home_router.router, tags=["首页"])
@@ -206,10 +197,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# active_alarms = {}
-# app.state.TEMP_UPPER_LIMIT=None
-
-# 最多读取120个寄存器
+# 每次最多读取120个寄存器
 async def partial_read(plc_client, start_address, cnt):
     # async with plc_lock:
     result = await plc_client.read_holding_registers(address=start_address, count=cnt, device_id=1)
@@ -230,72 +218,32 @@ async def read_granary_max_temp(gran_code):
         logger.info(f"【系统启动】读取到粮仓数据共 {len(granaries)} 条")
         return granaries
 
-    
-# async def plc_polling_task(index, plc_client, house_code):
-#     """该任务在后台独立运行，有且仅有它一个人维持与 PLC 的长连接"""
-#     event_type='PLC_DISCONNECT'
-#     while True:
-#         if not plc_client.connected:
-#             logger.error("【连接断开，等待自动重连】")
-#             await asyncio.sleep(3)
-#             # todo: 断开三次以上才记录alarm
-#             msg=f"❌ 通信故障：{house_code} PLC 连接断开！"
-#             # alarm_data = create_alarm_json(event_type, HOUSE_CODE, f"❌ 通信故障：{HOUSE_CODE} PLC 连接断开！")
-#             # if not app.state.active_alarms[alarm_key]:
-#             # gen_alarm(alarm_key, alarm_data)
-#             await gen_alarm(event_type, house_code, msg)
-#             logger.info('after gen_alarm for plc')
-#             continue
-#         try:
-#             await clear_alarm(event_type, house_code)
-#             app.state.num_ticks[index] += 1
-#             await asyncio.gather(
-#                 process_temp(index, plc_client, house_code),
-#                 process_humid(index, plc_client, house_code),
-#                 process_power(index, plc_client, house_code),
-#                 # todo: collect devices states
-#                 # process_dev_state(plc_client, house_code),   
-#             )
-            
-#         except Exception as e:
-#             logger.info(f"【采集异常】: {e}, ")
-#         finally:
-#             if app.state.num_ticks[index]==STORAGE_INTERVAL:
-#                 app.state.num_ticks[index] = 1
-#         # 每1秒采集一次
-#         await asyncio.sleep(1)
-
-async def check_plc_connection(index, plc_client, house_code):
+async def check_plc_connection(index, plc_clients, house_code):
     """该任务在后台独立运行，有且仅有它一个人维持与 PLC 的长连接"""
     logger.info('in check_plc_connection')
     event_type='PLC_DISCONNECT'
     while True:
-        if not plc_client.connected:
-            logger.error("【连接断开，等待自动重连】")
-            await asyncio.sleep(3)
-            # todo: 断开三次以上才记录alarm
-            msg=f"❌ 通信故障：{house_code} PLC 连接断开！"
-            await gen_alarm(event_type, house_code, msg)
-            logger.info('after gen_alarm for plc')
-            continue
-        try:
-            await clear_alarm(event_type, house_code)            
-        except Exception as e:
-            logger.info(f"【PLC连接异常】: {e}, ")
-        
-        # 每1秒采集一次
-        await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
-
-# process_temp_new:
-
-# async def is_live_action:
-#     if live_read:
-        
+        for plc_client in plc_clients:
+            if not plc_client.connected:
+                logger.error("【连接断开，等待自动重连】")
+                await asyncio.sleep(3)
+                # todo: 断开三次以上才记录alarm
+                msg=f"❌ 通信故障：{house_code} PLC[{plc_client}] 连接断开！"
+                await gen_alarm(event_type, house_code, msg)
+                logger.info('after gen_alarm for plc')
+                continue
+            try:
+                await clear_alarm(event_type, house_code)
+            except Exception as e:
+                logger.error(f"【PLC连接异常】: {e}")
+            
+            # 每1秒采集一次
+            await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 def check_cache_val(data_cache, threshold):
-    for v in data_cache:
-        if v >= threshold:
-            logger.error(f"***************** Invalid value found: {v},时间: ")
+    for val in data_cache:
+        if val >= threshold:
+            logger.error(f"***************** Invalid value found: {val},时间: ")
             return False
     return True
 
@@ -615,4 +563,16 @@ async def write_single_reg(plc_client, start_add: int, val:int):
 
 if __name__ == "__main__":
     # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
-    uvicorn.run("plc_server:app", host="0.0.0.0", port=8000, reload=True)
+    config = uvicorn.Config(
+        "plc_server:app", 
+        host="0.0.0.0", 
+        port=8000, 
+        reload=False
+    )
+    server = uvicorn.Server(config)
+    # uvicorn.run("plc_server:app", host="0.0.0.0", port=8000, reload=True)
+    # 📢 核心细节 B：针对 Python 3.12+ 强行指定循环工厂
+    # 这样既在 Windows 上使用了支持异步子进程的 ProactorLoop，又完美避开了已废弃的 set_event_loop_policy 警告
+    if sys.platform == 'win32':
+        # 强制利用全新的 Runner 或指定的工厂函数注入 Proactor 循环
+        asyncio.run(server.serve(),  loop_factory=asyncio.ProactorEventLoop)

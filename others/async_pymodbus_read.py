@@ -3,10 +3,10 @@ import asyncio
 import struct
 
 async def read_plc(start_address:int, len:int):
-    client = AsyncModbusTcpClient('192.168.0.20', port=503)
+    client = AsyncModbusTcpClient('192.168.0.20', port=504)
     try:
         await client.connect()
-        print("连接成功")
+        print(f"连接成功,plc 连接信息:{client}")
         # 使用 unit 替代 slave
         result = await client.read_holding_registers(address=start_address,count=len, device_id=1)
 
