@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI):
 
     # plc Lock
     app.state.plc_locks = [asyncio.Lock() for _ in range(silos_cnt)]
+    app.state.device_locks = [asyncio.Lock() for _ in range(silos_cnt)]
 
     # temp
     app.state.global_plc_cache = [[] for _ in range(silos_cnt)]
