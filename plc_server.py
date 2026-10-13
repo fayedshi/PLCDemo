@@ -9,6 +9,7 @@ from pymodbus.client import AsyncModbusTcpClient
 from contextlib import asynccontextmanager
 import httpx
 from config import settings
+from enums.enum_alarm_event import AlarmType
 from models import AlarmLog
 from routers import alarm_router, ca_config_router, power_router, temp_router,venti_router, home_router, gran_router, gas_router, video_router
 from schemas import AlarmLogCreate
@@ -16,7 +17,7 @@ from util import  build_influx_line_protocol, get_start_reg_addr, registers_to_v
 from datetime import datetime
 from database import AsyncSessionLocal, Base, engine
 from routers.gran_router import read_granaries 
-
+from enums.enum_device import Device
 from logger.demo_logger import logger
 
 # ==================== 1. 全局变量 ====================
@@ -140,6 +141,9 @@ async def lifespan(app: FastAPI):
             # polling_job = asyncio.create_task(plc_polling_task(index, plc_client, gran['code']))
 
             task_check_plc_connection=asyncio.create_task(check_plc_connection(index, plc_clients, gran['code']))
+
+            task_read_temp=asyncio.create_task(check_dev_states(index, plc_client_main, gran['code']))
+
             task_read_temp=asyncio.create_task(read_temp(index, plc_client_main, gran['code']))
             task_check_alarm =asyncio.create_task(check_temp_alarm('TEMP_HIGH', gran['code'], index))
             task_store_temp=asyncio.create_task(store_temp(index, gran['code']))
@@ -299,6 +303,25 @@ def create_alarm_json(event_type, HOUSE_CODE, msg):
         "cleared": False
     }
 
+async def load_dev_states(plc_client, house_index):
+    # house_index = int(house_code) -1
+    states_obj= settings.granaries[house_index]['devices_addr']['states']
+    states_buffer_obj={}
+    # logger.info(f'dev_start: {dev_start}')
+    # plc_client=websocket.app.state.plc_conns[house_index]
+    # cates=['control','windows', 'dampers', 'blowers','exhaustFans','airConditioners']
+    cates = [dev for dev in Device.__members__]
+    
+    for cate in cates:
+        if cate in states_obj:
+            start=states_obj[cate][0]
+            end=states_obj[cate][1]
+            dev_state_cache = partial_read(plc_client, start, end - start + 1)
+            states_buffer_obj[cate] = dev_state_cache
+
+    return states_buffer_obj
+
+
 async def save_to_history_db(alarm_data: dict):
     # 1. 使用 Pydantic 进行第一轮严格的数据校验和清洗
     try:
@@ -345,32 +368,24 @@ async def read_temp_data(temp_start_addr, plc_client):
     temp_data.extend(await partial_read(plc_client,temp_start_addr+120,20))
     return temp_data
 
-
-
-# async def process_temp(index, plc_client, house_code, temp_start):
-#     while(True):
-#         try:
-#             logger.info('in process_temp')
-#             # temp_data=await partial_read(plc_client,35,120)
-#             # # logger.info(f"【采集成功】温度数据: {global_plc_cache[0]} | 时间: ")
-#             # # break
-#             # temp_data.extend(await partial_read(plc_client,155,20))
-#             # 临时加入，检查异常值，可能不需要
-#             temp_data= await read_temp_data(temp_start, plc_client)
-#             res =  check_cache_val(temp_data)
-#             if not res:
-#                 logger.info(f"*****************PLC内部异常 in poll_and_store_temp: ，等待1分钟")
-#                 await asyncio.sleep(60)
-#                 return
-
-#             # check alarm and format display data and store temp
-#             await asyncio.gather(
-#                 check_temp_alarm('TEMP_HIGH', temp_data, house_code,index), 
-#                 format_display_temp(index,temp_data), 
-#                 store_temp(index,temp_data, house_code), return_exceptions=True)
-#         except Exception as e:
-#             logger.info(f'############## poll_and_store_temp in house-{house_code}发生异常: {e}, ')
-#         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
+# 设备故障检查
+async def check_dev_states(index, plc_client, house_code):
+    while(True):
+        try:
+            states_obj= await load_dev_states(plc_client,index)
+            cates = [dev for dev in Device.__members__]    
+            for cate in cates:
+                # if cate in states_obj:
+                #     start=states_obj[cate][0]
+                vals = states_obj[cate]
+                for dev_index,val in enumerate(vals):
+                    if val == 6:
+                        msg=f"🔴 仓房 {house_code}, 设备故障：{cate}-{dev_index+1}"
+                        await gen_alarm(AlarmType.DEVICE_MALFUNCTION.name, house_code, msg)
+                        logger.info(f'创建alarm 设备报警 {msg}')
+        except Exception as e:
+            logger.exception(f'############## read_temp in house-{house_code}发生异常: {e}, ')
+            await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
 
 async def read_temp(index, plc_client, house_code):
     while(True):
@@ -474,7 +489,7 @@ async def read_power(index, plc_client, house_code):
             for i in range(0, len(raw_regs), 2):
                 # pair = data[i:i+2]
                 if i==len(raw_regs)-2:
-                    # logger.info(f'power data regs: {raw_regs[i]},{raw_regs[i+1]}')
+                    logger.debug(f'power data regs: {raw_regs[i]},{raw_regs[i+1]}')
                     consumEnerg=round(registers_to_val(raw_regs[i],raw_regs[i+1],'I')/1000,1)
                     data.append(consumEnerg)
                 else:
@@ -489,7 +504,7 @@ async def read_power(index, plc_client, house_code):
 async def read_gas(index, plc_client, house_code):
     while True:
         try:
-            logger.info('in read_gas')
+            # logger.info('in read_gas')
             
             gas_start =settings.granaries[index]['gas_detect']['gas_start']
             logger.info(f'gas start: {gas_start}')
@@ -500,7 +515,7 @@ async def read_gas(index, plc_client, house_code):
                     raw_regs[indx] = round(raw_regs[indx] / 10, 1)
 
             app.state.global_gas_cache[index] = raw_regs
-            logger.info(f'house-{house_code}气体检测数据: {app.state.global_gas_cache[index]}')
+            # logger.info(f'house-{house_code}气体检测数据: {app.state.global_gas_cache[index]}')
         except Exception as e:
             logger.error(f'house-{house_code}############## read_gas 发生异常: {e}')
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)

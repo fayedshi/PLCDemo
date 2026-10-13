@@ -116,9 +116,8 @@ async def delete_granary(item_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.websocket("/ws/dev-state/{house_code}")
 async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
-    # global dev_state_cache
     await websocket.accept()
-    logger.info("【后端提示】发现/ws/dev-state前端客户端已连接！")
+    logger.info("发现/ws/dev-state前端客户端已连接！")
     try:
         house_index = int(house_code) -1
         states_obj= settings.granaries[house_index]['devices_addr']['states']

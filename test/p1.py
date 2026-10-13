@@ -21,11 +21,19 @@ if __name__ == "__main__":
     key_list=  [_key for _key in js_obj.keys()]
 
     print(key_list)
-
+    val=0
+    try:
+        val= key_list[2]
+        
+    except Exception as  e:
+        val=None 
+    
+    print(f'val {val}')
     for key in js_obj.keys():
         print(f'my key: {key}')
 
     js={}
     if not js:
         print('test ok')
+
 
