@@ -49,11 +49,11 @@ async def websocket_endpoint(websocket: WebSocket, gran_code: str):
             
             await websocket.send_json(send_buffer)
             # send to vue every 2 sec
-            await asyncio.sleep(5)
+            await asyncio.sleep(300)
     except Exception as e:
-        logger.exception(f"客户端/ws/live断开连接house-{gran_code}: {e}")
-    finally:
-        websocket.app.state.read_temp_humid_interval[house_index]= 300
-        websocket.app.state.read_power_interval[house_index]=300
+        logger.info(f"客户端/ws/live断开连接house-{gran_code}: {e}")
+    # finally:
+    #     websocket.app.state.read_temp_humid_interval[house_index]= 300
+    #     websocket.app.state.read_power_interval[house_index]=300
 
 

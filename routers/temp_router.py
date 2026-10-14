@@ -106,70 +106,72 @@ def get_history_data(request: Request,start_time: str,end_time: str, layer: int,
     avg_humid_clause= f"ROUND(AVG(({str_humid_sum}) / {partial_len})/10.0, 1) AS avg_humid"
 
     if 'min' in options:
-        # clauses.append(min_temp_clause)
-        # clauses.append(min_humid_clause)
-        temp_clauses.append(min_temp_clause)
-        humid_clauses.append(min_humid_clause)
+        clauses.append(min_temp_clause)
+        clauses.append(min_humid_clause)
+        # temp_clauses.append(min_temp_clause)
+        # humid_clauses.append(min_humid_clause)
 
     if 'avg' in options:
-        # clauses.append(avg_temp_clause)
-        # clauses.append(avg_humid_clause)
-        temp_clauses.append(avg_temp_clause)
-        humid_clauses.append(avg_humid_clause)
+        clauses.append(avg_temp_clause)
+        clauses.append(avg_humid_clause)
+        # temp_clauses.append(avg_temp_clause)
+        # humid_clauses.append(avg_humid_clause)
 
     if 'max' in options:
-        # clauses.append(max_temp_clause)
-        # clauses.append(max_humid_clause)
-        temp_clauses.append(max_temp_clause)
-        humid_clauses.append(max_humid_clause)
+        clauses.append(max_temp_clause)
+        clauses.append(max_humid_clause)
+        # temp_clauses.append(max_temp_clause)
+        # humid_clauses.append(max_humid_clause)
 
     clauses_str= ", ".join(clauses)
-    temp_clause_str= ", ".join(temp_clauses)
-    humid_clause_str= ", ".join(humid_clauses)
+    # temp_clause_str= ", ".join(temp_clauses)
+    # humid_clause_str= ", ".join(humid_clauses)
     start = to_utctime(start_time)
     end = to_utctime(end_time)
 
-    # query = f"""
-    #     SELECT 
-    #         {clauses_str},
-    #         DATE_BIN(INTERVAL '10 minutes', a.time, TIMESTAMP '1970-01-01 00:00:00') chart_time 
-    #     FROM plc_temp_data a left join plc_humid_data b 
-    #         on DATE_BIN(INTERVAL '10 minutes', a.time, TIMESTAMP '1970-01-01 00:00:00')=DATE_BIN(INTERVAL '10 minutes', b.time, TIMESTAMP '1970-01-01 00:00:00') 
-    #     where 
-    #         a.time between '{start}' AND '{end}' 
-    #         AND b.time BETWEEN '{start}' AND '{end}' 
-    #         and a.temp0 is not null
-    #     group by chart_time 
-    #     order by chart_time ASC
-    #     """
     query = f"""
-        WITH temp_aligned AS (
-            SELECT 
-                {temp_clause_str},
-                DATE_BIN(INTERVAL '10 minutes', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time
-            FROM plc_temp_data
-            WHERE time BETWEEN '{start}' AND '{end}' AND temp0 IS NOT NULL
-            GROUP BY chart_time
-        ),
-        humid_aligned AS (
-            SELECT 
-                {humid_clause_str},
-                DATE_BIN(INTERVAL '10 minutes', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time
-            FROM plc_humid_data
-            WHERE time BETWEEN '{start}' AND '{end}' 
-            GROUP BY chart_time
-        )
-        
         SELECT 
-            
-            a.avg_temp, b.avg_humid,
-            
-            a.chart_time
-        FROM temp_aligned a
-        LEFT JOIN humid_aligned b ON a.chart_time = b.chart_time 
+            {clauses_str},
+            DATE_BIN(INTERVAL '10 minutes', a.time, TIMESTAMP '1970-01-01 00:00:00') chart_time 
+        FROM plc_temp_data a left join plc_humid_data b 
+            on DATE_BIN(INTERVAL '10 minutes', a.time, TIMESTAMP '1970-01-01 00:00:00')=DATE_BIN(INTERVAL '10 minutes', b.time, TIMESTAMP '1970-01-01 00:00:00') 
+        where 
+            a.time between '{start}' AND '{end}' 
+            AND b.time BETWEEN '{start}' AND '{end}' 
+            and a.temp0 is not null
+        group by chart_time 
+        order by chart_time ASC
+        """
+    # logger.info(f'temp_clause_str: {temp_clause_str}')
+    # query = f"""
+    #     WITH temp_aligned AS (
+    #         SELECT 
+    #             {temp_clause_str},
+    #             DATE_BIN(INTERVAL '10 minutes', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time
+    #         FROM plc_temp_data
+    #         WHERE time BETWEEN '{start}' AND '{end}' AND temp0 IS NOT NULL
+    #         GROUP BY chart_time
+    #     ),
+    #     humid_aligned AS (
+    #         SELECT 
+    #             {humid_clause_str},
+    #             DATE_BIN(INTERVAL '10 minutes', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time
+    #         FROM plc_humid_data
+    #         WHERE time BETWEEN '{start}' AND '{end}' 
+    #         GROUP BY chart_time
+    #     )
         
-        ORDER BY a.chart_time ASC
-    """
+    #     SELECT 
+            
+    #         a.avg_temp, b.avg_humid,
+    #         a.min_temp, b.min_humid,
+    #         a.max_temp, b.max_humid,
+    #         a.chart_time
+    #     FROM temp_aligned a
+    #     LEFT JOIN humid_aligned b ON a.chart_time = b.chart_time 
+        
+    #     ORDER BY a.chart_time ASC
+    # """
 
     # 3. 执行查询并转换数据
     try:

@@ -21,6 +21,7 @@ class AlarmLog(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     type = Column(String(50), nullable=False)
+    custom_key= Column(String(50), nullable=False)
     house_code = Column(String(50), nullable=False, index=True)
     message = Column(String(500), nullable=False)
     trigger_time = Column(DateTime, nullable=False)

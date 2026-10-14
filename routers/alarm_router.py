@@ -12,34 +12,25 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from logger.demo_logger import logger
 router = APIRouter()
 
-
-# config_data=load_config()
-# granaries = config_data.get('granaries', [])
-
 # 4. WebSocket 接口：供前端实时连接
 @router.websocket("/ws/alarms")
 async def websocket_alarms_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info(f"客户端/ws/alarms已连接:")
-    # connected_clients.add(websocket)
     try:
         # 不需要分仓房，本来就是收集多个仓房
         # house_index = int(house_code) -1
-        websocket.app.state.read_alarm_interval= 2
-        # manual execute once to expose alarms
-        # websocket.app.state.check_temp_alarm('TEMP_HIGH', gran['code'], index)
+        # websocket.app.state.read_alarm_interval= 2
         while True:
             # await websocket.receive_text() # 维持心跳
             # logger.info(f'alarms: {websocket.app.state.active_alarms}')
             # 握手成功后，立刻把当前“正在发生”的报警推给前端，防止前端刷新页面后看板变空
-            await websocket.send_json(
-                websocket.app.state.active_alarms
-            )
-            await asyncio.sleep(2)
+            await websocket.send_json(websocket.app.state.active_alarms)
+            await asyncio.sleep(5)
     except Exception as e:
-        logger.exception(f"客户端/ws/alarms断开连接: {e}")
-    finally:
-        websocket.app.state.read_alarm_interval= 5
+        logger.info(f"客户端/ws/alarms断开连接: {e}")
+    # finally:
+    #     websocket.app.state.read_alarm_interval= 5
 
 
 # --- API 接口定义 ---
@@ -83,7 +74,7 @@ async def get_history_alarms(
 async def ack_alarm(request: Request, data: dict):
     try:
         alarm_key=data.get('alarm_key')
-        logger.info(' in ack ',alarm_key)
+        logger.info(f'in ack: {alarm_key}')
         request.app.state.active_alarms[alarm_key]['ack']=True
         request.app.state.active_alarms[alarm_key]['ack_time']=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logger.info(f'更新alarm ack成功')

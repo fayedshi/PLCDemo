@@ -21,6 +21,10 @@ if __name__ == "__main__":
     key_list=  [_key for _key in js_obj.keys()]
 
     print(key_list)
+
+    for dev_index,val in enumerate(key_list):
+        print(f'index: {dev_index} val: {val}')
+ 
     val=0
     try:
         val= key_list[2]
@@ -35,5 +39,9 @@ if __name__ == "__main__":
     js={}
     if not js:
         print('test ok')
+
+    str_t=''
+    if not str_t:
+        print('empty string')
 
 

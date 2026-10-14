@@ -15,7 +15,7 @@ current_device = Device.blowers
 print(type(current_device))
 
 # 3. 访问名字（Name）和具体值（Value）
-print(current_device.name)   # 输出: "RUNNING" (字符串)
+print(f'name: {current_device.name}')   # 输出: "RUNNING" (字符串)
 print(current_device.value)  # 输出: 2 (对应的值)
 cates=  [dev for dev in  Device.__members__]
 print(cates)

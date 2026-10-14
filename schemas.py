@@ -33,6 +33,7 @@ class GranaryOut(GranaryBase):
 class AlarmLogBase(BaseModel):
     # id: int = Field(..., description="", example="TEMP_HIGH")
     type: str = Field(..., description="报警类型", example="TEMP_HIGH")
+    custom_key: str = Field(..., description="报警对象", example="windows-2")
     house_code: str = Field(..., description="粮仓代码", example="001")
     message: str = Field(..., description="报警消息文本")
     trigger_time: datetime = Field(default_factory=datetime.now)
