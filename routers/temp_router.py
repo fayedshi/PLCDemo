@@ -75,9 +75,10 @@ def show_cords_temp(request: Request, input_time: str, house_code: str):
 
 
 @router.get("/api/temp-trend")
-def get_history_data(request: Request,start_time: str,end_time: str, layer: int, options: list[str] = Query([])):
+def get_history_data(request: Request,house_code: str, start_time: str,end_time: str, layer: int, options: list[str] = Query([])):
+
     influx_client=InfluxDBClient3(host=request.app.state.influx_db_url, token=request.app.state.influx_token, database="my_db")
-    logger.info(f'start_time: {start_time},options: {options}')
+    logger.info(f'house code: {house_code}, start_time: {start_time},options: {options}')
     # 1. 动态生成 140 个列名的列表：['temp0', 'temp1', ..., 'temp139']
     
     step = 1 if layer == -1 else 4
@@ -136,6 +137,7 @@ def get_history_data(request: Request,start_time: str,end_time: str, layer: int,
         FROM plc_temp_data a left join plc_humid_data b 
             on DATE_BIN(INTERVAL '10 minutes', a.time, TIMESTAMP '1970-01-01 00:00:00')=DATE_BIN(INTERVAL '10 minutes', b.time, TIMESTAMP '1970-01-01 00:00:00') 
         where 
+            a.station_id= '{house_code}' and b.station_id= '{house_code}' and
             a.time between '{start}' AND '{end}' 
             AND b.time BETWEEN '{start}' AND '{end}' 
             and a.temp0 is not null

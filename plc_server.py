@@ -11,7 +11,7 @@ import httpx
 from config import settings
 from enums.enum_alarm_event import AlarmType
 from models import AlarmLog
-from routers import alarm_router, ca_config_router, power_router, temp_router,venti_router, home_router, gran_router, gas_router, video_router
+from routers import alarm_router, ca_config_router, power_router, temp_router,venti_router, home_router, gran_router, gas_router, video_router, silo_access_router
 from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, get_start_reg_addr, registers_to_val
 from datetime import datetime
@@ -201,7 +201,7 @@ app.include_router(alarm_router.router, tags=["报警模块"])
 app.include_router(ca_config_router.router, tags=["报警模块"])
 app.include_router(gas_router.router, tags=["气体检测模块"])
 app.include_router(video_router.router, tags=["安防监控模块"])
-
+app.include_router(silo_access_router.router, tags=["粮仓门禁代理"])
 # 1. 解决跨域问题（允许 Vue 前端和手机端访问）
 app.add_middleware(
     CORSMiddleware,
@@ -355,9 +355,10 @@ async def clear_alarm(event_type, custom_key, house_code):
         alarm_key= f'{alarm_key}_{custom_key}'
     # logger.info(f'in clear_alarm(), alarm_key: {alarm_key}')
     if alarm_key in app.state.active_alarms and app.state.active_alarms[alarm_key]:
-        logger.info(f'##To clear alarm: {alarm_key}, 是否ack: {alarm_data['ack']}')
+        
         # 已经存在 {alarm_key: {}}, no more update to the empty alarm
         alarm_data = app.state.active_alarms[alarm_key]
+        logger.info(f"##To clear alarm: {alarm_key}, 是否ack: {alarm_data['ack']}")
         alarm_data['cleared'] = True
         alarm_data['clear_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if alarm_data['ack']:
@@ -498,13 +499,13 @@ async def read_power(index, plc_client, house_code):
             for i in range(0, len(raw_regs), 2):
                 # pair = data[i:i+2]
                 if i==len(raw_regs)-2:
-                    logger.debug(f'power data regs: {raw_regs[i]},{raw_regs[i+1]}')
+                    # logger.debug(f'power data regs: {raw_regs[i]},{raw_regs[i+1]}')
                     consumEnerg=round(registers_to_val(raw_regs[i],raw_regs[i+1],'I')/1000,1)
                     data.append(consumEnerg)
                 else:
                     data.append(round(registers_to_val(raw_regs[i],raw_regs[1+1],'f'),1))
             app.state.global_power_cache[index] = data
-            logger.info(f'data: {data},能耗数据: {app.state.global_power_cache[index]}')
+            logger.info(f'能耗数据: {app.state.global_power_cache[index]}')
         except Exception as e:
             logger.error(f'house-{house_code}############## read_power 发生异常: {e}')
         await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
