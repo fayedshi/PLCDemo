@@ -211,3 +211,26 @@ class CAResponse(CABase):
 
     class Config:
         from_attributes = True # 旧版为 orm_mode = True
+
+
+class UserBase(BaseModel):
+    username: str
+    role: str
+
+class UserCreate(UserBase):
+    password: str
+
+class UserUpdate(BaseModel):
+    password: Optional[str] = None
+    role: Optional[str] = None
+
+class UserOut(UserBase):
+    id: int
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    role: str
