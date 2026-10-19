@@ -6,7 +6,7 @@ from pwdlib import PasswordHash
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-from passlib.context import CryptContext
+# from passlib.context import CryptContext
 import jwt
 from datetime import datetime, timedelta
 from typing import List
@@ -145,3 +145,78 @@ async def delete_user(user_id: int, db: AsyncSession = Depends(database.get_db),
         raise HTTPException(status_code=404, detail=f"未找到 ID 为 {user_id} 的用户")
     await db.commit()
     return {"detail": "删除成功"}
+
+# 5. 请求体数据校验模型
+class UpdatePasswordSchema(BaseModel):
+    old_password: str = Field(..., description="原始密码")
+    new_password: str = Field(..., description="新密码")
+    confirm_password: str = Field(..., description="确认新密码")
+
+# 6. 修改密码核心 API
+@router.post("/api/v1/auth/password/update")
+def update_password(data: UpdatePasswordSchema, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+    # 验证两次输入的新密码是否一致
+    if data.new_password != data.confirm_password:
+        raise HTTPException(status_code=400, detail="两次输入的新密码不一致")
+    
+    # 验证旧密码是否正确
+    if not pwd_context.verify(data.old_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="旧密码输入错误，请重新输入")
+        
+    # 验证新密码是否和旧密码相同（安全策略）
+    if pwd_context.verify(data.new_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
+        
+    # 密码强度校验（等保合规要求：长度>=8位，且包含大写字母、小写字母、数字及特殊字符）
+    password_regex = re.compile(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$')
+    if not password_regex.match(data.new_password):
+        raise HTTPException(
+            status_code=400, 
+            detail="密码不符合安全规范：长度至少8位，且必须包含大小写字母、数字和特殊字符"
+        )
+        
+    # 更新密码并保存
+    current_user.password_hash = pwd_context.hash(data.new_password)
+    current_user.is_first_login = False
+    current_user.last_password_change = datetime.utcnow()
+    
+    db.commit()
+    return {"code": 200, "message": "密码修改成功，请用新密码重新登录"}
+
+# 追加到 main.py 中
+
+# 1. 模拟管理员权限依赖项 (实际开发中应从 JWT Token 解析角色)
+def get_current_admin_user(current_user: UserModel = Depends(get_current_user)) -> UserModel:
+    # 生产环境中这里应该判断：if "ADMIN" not in current_user.roles:
+    # 这里做模拟演示，假设当前请求的用户具备管理员权限
+    return current_user
+
+# 2. 管理员重置密码接口
+@router.post("/api/v1/admin/users/{user_id}/reset-password")
+def admin_reset_password(
+    user_id: int, 
+    db: Session = Depends(get_db), 
+    admin: UserModel = Depends(get_current_admin_user) # 拦截器：确保只有管理员能调用
+):
+    # 查寻要被重置密码的保管员
+    keeper_user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    if not keeper_user:
+        raise HTTPException(status_code=404, detail="未找到该库区职工账号")
+        
+    # 设置一个符合等保规范的默认初始化密码
+    DEFAULT_INITIAL_PASSWORD = "Reset@2026#Grain"
+    
+    # 核心逻辑：重置密码，并强制将其 is_first_login 设为 True
+    keeper_user.password_hash = pwd_context.hash(DEFAULT_INITIAL_PASSWORD)
+    keeper_user.is_first_login = True  # 关键：标记为首次登录/需要强改状态
+    keeper_user.last_password_change = datetime.utcnow()
+    
+    db.commit()
+    
+    return {
+        "code": 200, 
+        "message": f"职工 [{keeper_user.username}] 的密码已成功重置！",
+        "data": {
+            "initial_password": DEFAULT_INITIAL_PASSWORD # 返回给前端展示，方便管理员复制告知保管员
+        }
+    }

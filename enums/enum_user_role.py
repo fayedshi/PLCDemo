@@ -4,5 +4,6 @@ from enum import Enum
 # 1. 定义一个作业状态的枚举
 # control','windows', 'dampers', 'blowers','exhaustFans','airConditioners'
 class UserRole(Enum):
-    ADMIN=(1,'系统管理员')     
-    PLAIN_USER=(2,'一般用户') 
+    SUPER_ADMIN = (1, '超级管理员')  # 可选：如果后续需要最高权限
+    ADMIN = (2, '系统管理员')
+    STAFF = (3, '标准用户')   # 替代 PLAIN_USER，显得更专业标准
