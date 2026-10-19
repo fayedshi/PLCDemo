@@ -1,8 +1,11 @@
 import asyncio
+from datetime import datetime
+
+from passlib.context import CryptContext
 
 from util import convert_dev_addr
 
-
+from pwdlib import PasswordHash
 
     # print(f"test loadsilo: {load_silo_addrs('001')}")
 async def test_run_actions(obj_arr):
@@ -37,8 +40,15 @@ async def test_convert_dev_addr():
     }
     print(f"test convert_dev_addr:  {convert_dev_addr(devices_obj,'001',1)}")
 
+
     
-    
+# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")    
+
+password_hash = PasswordHash.recommended()
+
+
+def get_password_hash(password):
+    return password_hash.hash(password)
 
 
 if __name__ == "__main__":
@@ -48,4 +58,6 @@ if __name__ == "__main__":
                 { "exhaustFans": { "28": 3 } },
                 { "airConditioners": {} },
                 { "dampers": { "12": 2 } }]
-    asyncio.run(test_run_actions(obj_arr))
+    # asyncio.run(test_run_actions(obj_arr))
+    passwd = get_password_hash('admin99')
+    print(f'pass: {passwd}, {datetime.now()}')

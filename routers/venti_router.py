@@ -3,6 +3,7 @@ import asyncio
 from fastapi import APIRouter, Depends, Request, status, Query,HTTPException
 from sqlalchemy import select, update, delete
 from typing import List
+from auth_util import is_admin
 import models, schemas
 from database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,7 +63,7 @@ async def get_venti_list(
 
 # 🎯 接口 2：【增】- 新增廒间
 @router.post("/api/ventilation-mode", response_model=schemas.VentilationModeOut, status_code=status.HTTP_201_CREATED)
-async def create_granary(obj_in: schemas.VentilationModeCreate, db: AsyncSession = Depends(get_db)):
+async def create_granary(obj_in: schemas.VentilationModeCreate, db: AsyncSession = Depends(get_db), admin_info = Depends(is_admin)):
     # 校验编号唯一性
     # check_stmt = select(models.VentilationMode).where(models.VentilationMode.code == obj_in.code)
     # existing = (await db.execute(check_stmt)).scalar_one_or_none()
@@ -138,7 +139,7 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
             # send to vue every 2 sec
             await asyncio.sleep(1)
     except Exception as e:
-        logger.exception(f"ws/dev-state house-{house_code}客户端断开连接 : {e}")
+        logger.info(f"ws/dev-state house-{house_code}客户端断开连接 : {e}")
 
 
 @router.get("/api/dev-address/{house_code}")
@@ -149,7 +150,8 @@ async def get_dev_addr_list(house_code):
 
 #  设备控制接口
 @router.post("/api/dev/control")
-async def control_window(request: Request, data: dict, background_tasks: BackgroundTasks):
+async def control_window(request: Request, data: dict, background_tasks: BackgroundTasks, admin_info = Depends(is_admin)):
+    
     action_type = data.get('action_type')
     dev_id = data.get('dev_id')
     house_index = int(data.get('house_code')) -1
@@ -267,7 +269,7 @@ async def read_dev_state(request, plc_client, house_index, category, dev_id_suff
 
 
 @router.post("/api/venti/adhoc/start")
-async def venti_adhoc_start(request: Request, data: dict, background_tasks: BackgroundTasks):
+async def venti_adhoc_start(request: Request, data: dict, background_tasks: BackgroundTasks, admin_info = Depends(is_admin)):
        
     house_code = data.get('house_code')
     house_index = int(house_code) - 1
@@ -540,7 +542,7 @@ async def check_locks(request, house_index, house_code):
 # 智能作业
 #  任务状态： 等待触发（-1），运行中(0)，结束(1，正常完成 2，等待触发超时，3，等待结束超时， 4，cancelled  5，异常中止)
 @router.post("/api/venti/sched/start")
-async def venti_sched_start(request: Request, data: dict, background_tasks: BackgroundTasks):
+async def venti_sched_start(request: Request, data: dict, background_tasks: BackgroundTasks, admin_info = Depends(is_admin)):
     house_code = data.get('house_code')
     house_index = int(house_code) - 1
     # plc_lock = request.app.state.plc_locks[house_index]
@@ -742,7 +744,7 @@ async def check_condition_by_mode(request, flag, data):
     return False
             
 @router.post("/api/venti/job/stop")
-async def venti_adhoc_stop(request: Request, data: dict):
+async def venti_adhoc_stop(request: Request, data: dict, admin_info = Depends(is_admin)):
     house_code=data.get('house_code')
     house_index = int(house_code) -1
     plc_lock = request.app.state.plc_locks[house_index]

@@ -56,7 +56,7 @@ def show_cords_temp(request: Request, input_time: str, house_code: str):
     # 3. 执行查询并转换数据
     try:
         # language="sql" 显式指定使用 SQL引擎
-        logger.info('to exectue',query)
+        logger.info(f'to exectue,{query}')
         table = influx_client.query(query=query, language="sql")
 
         # 4. 将 PyArrow Table 转换为 Pandas DataFrame

@@ -1,5 +1,6 @@
 import sys
 
+from sqlalchemy import select
 import uvicorn
 import asyncio
 from fastapi import FastAPI
@@ -11,7 +12,11 @@ import httpx
 from config import settings
 from enums.enum_alarm_event import AlarmType
 from models import AlarmLog
-from routers import alarm_router, ca_config_router, power_router, temp_router,venti_router, home_router, gran_router, gas_router, video_router, silo_access_router
+import models
+from routers import alarm_router, ca_config_router, power_router, \
+    temp_router,venti_router, home_router, gran_router, gas_router, \
+    video_router, silo_access_router,auth_router
+from routers.auth_router import get_password_hash
 from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, get_start_reg_addr, registers_to_val
 from datetime import datetime
@@ -96,12 +101,13 @@ async def lifespan(app: FastAPI):
     logger.info(f'read granaries: {granaries}')
 
     
-
     async with engine.begin() as conn:
         # 如果表不存在，则自动创建（生产环境建议使用 Alembic 迁移）
         await conn.run_sync(Base.metadata.create_all)
 
     logger.info("connected to mysql")
+    # await init_admin()
+    logger.info(f'set up admin')
     logger.info("\n--- 📊 当前环境配置变量 ---")
     logger.info(f"后端服务 (influx_DB_URL): {app.state.influx_db_url}")
 
@@ -202,6 +208,7 @@ app.include_router(ca_config_router.router, tags=["报警模块"])
 app.include_router(gas_router.router, tags=["气体检测模块"])
 app.include_router(video_router.router, tags=["安防监控模块"])
 app.include_router(silo_access_router.router, tags=["粮仓门禁代理"])
+app.include_router(auth_router.router, tags=["登录模块"])
 # 1. 解决跨域问题（允许 Vue 前端和手机端访问）
 app.add_middleware(
     CORSMiddleware,
@@ -210,6 +217,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+async def init_admin():
+    async with AsyncSessionLocal() as session:
+        try:
+            stmt=select(models.User).filter(models.User.username == "admin")
+            result = await session.execute(stmt)
+            logger.error(f"result: {result}")   
+            # scalars().all() 获取对象列表，若为空则自动返回空数组 `[]`
+            user = result.scalars().first()
+            if not user:
+                admin_user = models.User(
+                    username="admin",
+                    hashed_password=get_password_hash("admin123"),
+                    role="admin"
+                )
+                session.add(admin_user)
+                await session.commit()
+                logger.info(f"用户admin已创建")    
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"admin用户入库失败，已自动回滚: {e}")
 
 # 每次最多读取120个寄存器
 async def partial_read(house_index, plc_client, start_address, cnt):
