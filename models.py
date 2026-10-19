@@ -143,4 +143,4 @@ class User(Base):
     username = Column(String(50), unique=True, index=True, nullable=False)
     hashed_password = Column(String(100), nullable=False)
     role = Column(String(20), default="visitor", nullable=False)  # admin 或 visitor
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
