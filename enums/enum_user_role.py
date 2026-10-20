@@ -6,4 +6,5 @@ from enum import Enum
 class UserRole(Enum):
     SUPER_ADMIN = (1, '超级管理员')  # 可选：如果后续需要最高权限
     ADMIN = (2, '系统管理员')
-    STAFF = (3, '标准用户')   # 替代 PLAIN_USER，显得更专业标准
+    STAFF = (3, '标准用户')   # 一般员工
+    # 是否要增加无需登录的访客

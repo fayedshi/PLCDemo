@@ -1,8 +1,8 @@
 import pyhfs
 
 # 🔑 你的华为北向专门账号与密码（参见上一步在“北向管理”中创建的凭证）
-USER = "13567512726"
-PASSWORD = "13Ycl1967314"
+USER = "north_api_user"
+PASSWORD = "north@123"
 
 try:
     # 🎯 使用上下文管理器建立连接会话

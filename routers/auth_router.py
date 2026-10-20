@@ -1,4 +1,6 @@
 # JWT 配置
+import re
+
 from fastapi import APIRouter, FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
@@ -11,6 +13,7 @@ import jwt
 from datetime import datetime, timedelta
 from typing import List
 
+from auth_util import is_admin
 import models, schemas, database
 from logger.demo_logger import logger
 
@@ -146,25 +149,20 @@ async def delete_user(user_id: int, db: AsyncSession = Depends(database.get_db),
     await db.commit()
     return {"detail": "删除成功"}
 
-# 5. 请求体数据校验模型
-class UpdatePasswordSchema(BaseModel):
-    old_password: str = Field(..., description="原始密码")
-    new_password: str = Field(..., description="新密码")
-    confirm_password: str = Field(..., description="确认新密码")
 
 # 6. 修改密码核心 API
 @router.post("/api/v1/auth/password/update")
-def update_password(data: UpdatePasswordSchema, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+async def update_password(data: schemas.UpdatePasswordSchema, current_user: models.User = Depends(get_current_user), db: AsyncSession = Depends(database.get_db)):
     # 验证两次输入的新密码是否一致
     if data.new_password != data.confirm_password:
         raise HTTPException(status_code=400, detail="两次输入的新密码不一致")
     
     # 验证旧密码是否正确
-    if not pwd_context.verify(data.old_password, current_user.password_hash):
+    if not password_hash.verify(data.old_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="旧密码输入错误，请重新输入")
         
     # 验证新密码是否和旧密码相同（安全策略）
-    if pwd_context.verify(data.new_password, current_user.password_hash):
+    if password_hash.verify(data.new_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
         
     # 密码强度校验（等保合规要求：长度>=8位，且包含大写字母、小写字母、数字及特殊字符）
@@ -176,43 +174,47 @@ def update_password(data: UpdatePasswordSchema, current_user: UserModel = Depend
         )
         
     # 更新密码并保存
-    current_user.password_hash = pwd_context.hash(data.new_password)
+    current_user.password_hash = password_hash.hash(data.new_password)
     current_user.is_first_login = False
-    current_user.last_password_change = datetime.utcnow()
+    current_user.last_password_change = datetime.now()
     
-    db.commit()
+    await db.commit()
+    await db.refresh(current_user) 
     return {"code": 200, "message": "密码修改成功，请用新密码重新登录"}
 
 # 追加到 main.py 中
 
 # 1. 模拟管理员权限依赖项 (实际开发中应从 JWT Token 解析角色)
-def get_current_admin_user(current_user: UserModel = Depends(get_current_user)) -> UserModel:
-    # 生产环境中这里应该判断：if "ADMIN" not in current_user.roles:
-    # 这里做模拟演示，假设当前请求的用户具备管理员权限
-    return current_user
+# def get_current_admin_user(current_user: UserModel = Depends(is_admin)) -> UserModel:
+#     # 生产环境中这里应该判断：if "ADMIN" not in current_user.roles:
+#     # 这里做模拟演示，假设当前请求的用户具备管理员权限
+#     return current_user
 
 # 2. 管理员重置密码接口
 @router.post("/api/v1/admin/users/{user_id}/reset-password")
-def admin_reset_password(
+async def admin_reset_password(
     user_id: int, 
-    db: Session = Depends(get_db), 
-    admin: UserModel = Depends(get_current_admin_user) # 拦截器：确保只有管理员能调用
+    db: AsyncSession = Depends(database.get_db), 
+    admin_info = Depends(is_admin) # 拦截器：确保只有管理员能调用
 ):
     # 查寻要被重置密码的保管员
-    keeper_user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    stmt = select(models.User).where(models.User.id == user_id)
+    result = await db.execute(stmt)
+    # scalars().all() 获取对象列表，若为空则自动返回空数组 `[]`
+    keeper_user = result.scalars().first()
     if not keeper_user:
-        raise HTTPException(status_code=404, detail="未找到该库区职工账号")
+        raise HTTPException(status_code=404, detail="未找到该职工账号")
         
     # 设置一个符合等保规范的默认初始化密码
     DEFAULT_INITIAL_PASSWORD = "Reset@2026#Grain"
     
     # 核心逻辑：重置密码，并强制将其 is_first_login 设为 True
-    keeper_user.password_hash = pwd_context.hash(DEFAULT_INITIAL_PASSWORD)
+    keeper_user.password_hash = password_hash.hash(DEFAULT_INITIAL_PASSWORD)
     keeper_user.is_first_login = True  # 关键：标记为首次登录/需要强改状态
     keeper_user.last_password_change = datetime.utcnow()
     
-    db.commit()
-    
+    await db.commit()
+    await db.refresh(keeper_user) 
     return {
         "code": 200, 
         "message": f"职工 [{keeper_user.username}] 的密码已成功重置！",

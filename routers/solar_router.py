@@ -1,49 +1,120 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
+import httpx
 import pyhfs
 from typing import Dict, Any
 
-router = APIRouter(prefix="/api/v1/solar", tags=["华为光伏数据"])
+import requests
 
+
+from logger.demo_logger import logger
+
+
+# router = APIRouter(prefix="/api/v1/solar", tags=["华为光伏数据"])
+router = APIRouter(tags=["华为光伏数据"])
 # ==================== 🔑 华为北向连接单例管理器 ====================
-class HuaweiSolarManager:
-    def __init__(self):
-        self.client = None
-        self.user = "api_inspector_01"
-        self.password = "secure_password_123"
-
-    def get_client(self):
-        """
-        核心防限流设计：
-        如果内存中已经有连接会话了，直接复用，绝对不重复执行 login 握手！
-        """
-        if self.client is None:
-            try:
-                # 初始化 pyhfs 客户端会话
-                self.client = pyhfs.ClientSession(user=self.user, password=self.password)
-                # 手动触发一次底层登录
-                self.client.login() 
-            except pyhfs.LoginFailed:
-                self.client = None
-                raise HTTPException(status_code=401, detail="华为光伏北向认证失败")
-            except Exception as e:
-                self.client = None
-                raise HTTPException(status_code=502, detail=f"无法连接华为云网关: {e}")
-        return self.client
-
-    def reset_connection(self):
-        """如果 Token 彻底过期失效，调用此函数在下一次请求时强制重连"""
-        if self.client:
-            try:
-                self.client.logout()
-            except:
-                pass
-        self.client = None
-
-# 实例化全局唯一的管理器
-solar_manager = HuaweiSolarManager()
+import httpx
+import time
+from typing import Dict, Optional
+from huawei_solar_api import solar_api_instance
 
 
-# ==================== 🌐 FastAPI 路由端点 ====================
+
+BASE_URL = "https://cn.fusionsolar.huawei.com/thirdData"
+USERNAME = "north_api_user"
+PASSWORD = "north@123"
+
+async def get_async_client():
+    async with httpx.AsyncClient() as client:
+        yield client
+
+async def fetch_xsrftoken(client: httpx.AsyncClient):
+    try:
+        # session = requests.Session()
+        headers = {
+            # "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Content-Type": "application/json"
+        }
+        # 2. 登录获取 Token
+        # ⚠️ 华为限制：10分钟内最多登录5次，切勿在循环或高频请求中重复执行此登录步骤
+        response = await client.post(
+            f"{BASE_URL}/login", 
+            json={"userName": USERNAME, "systemCode": PASSWORD},
+            headers = headers
+        )
+
+        # 打印 HTTP 状态码（应该为 200）
+        print(f"HTTP状态码: {response.status_code}")
+    
+        # print(f"reponse: {response.text[:500]}")
+        res_json = response.json()
+        print(f"服务器返回内容: {res_json}，fail code{res_json['failCode']}")
+
+        if res_json.get("success") is True:
+            xsrf_token = response.headers.get("xsrf-token")
+            print(f"🎉 登录成功！获取到的 Token 为: {xsrf_token}")
+            return xsrf_token
+        else:
+            fail_code = res_json.get("failCode")
+            message = res_json.get("message")
+            print(f"❌ 登录失败！华为返回的错误码(failCode): {fail_code}，提示信息: {message}")
+    except Exception as e: 
+        logger.error(f'获取xsrf token请求异常 {e}')
+        return None
+    
+
+@router.get("/api/stations")
+async def get_stations(client: httpx.AsyncClient = Depends(get_async_client)):
+    
+    # try:
+    #     xsrf_token = await fetch_xsrftoken(client)
+    #     if not xsrf_token:
+    #         raise Exception('未获取token')
+    #     # todo: more than 1 page
+    #     stations_resp = await client.post(f"{BASE_URL}/stations",
+    #             headers={"XSRF-TOKEN": xsrf_token, "Content-Type": "application/json"},
+    #             json={"pageNo": 1} # 最小请求体，查询第1页数据 不传 并网开始时间，则返回分页数据"gridConnectedStartTime":1701561600000
+    #         )
+    #     station_json= stations_resp.json()
+    #     stations=[]
+    #     for station in station_json.get("data").get("list", []):
+    #         plant={}
+    #         plant['code']=station['plantCode']
+    #         plant['name']=station['plantName']
+    #         stations.append(plant)
+    #     logger.info(f'station list: {stations}')
+    #     return stations 
+    # except Exception as e: 
+    #     logger.error(f'get_stations异常 {e}')
+    #     return None
+    
+    solar_api_instance.get_station_list(USERNAME,PASSWORD,1)
+    
+# 按小时，日、天，月
+@router.get("/api/power")
+async def get_power_supply_data(station, freq,  client: httpx.AsyncClient = Depends(get_async_client)):
+    
+    try:
+        xsrf_token = await fetch_xsrftoken(client)
+        if not xsrf_token:
+            raise Exception('未获取token')
+        # todo: more than 1 page
+        stations_resp = await client.post(f"{BASE_URL}/stations",
+                headers={"XSRF-TOKEN": xsrf_token, "Content-Type": "application/json"},
+                json={"pageNo": 1} # 最小请求体，查询第1页数据 不传 并网开始时间，则返回分页数据"gridConnectedStartTime":1701561600000
+            )
+        station_json= stations_resp.json()
+        stations=[]
+        for station in station_json.get("data").get("list", []):
+            plant={}
+            plant['code']=station['plantCode']
+            plant['name']=station['plantName']
+            stations.append(plant)
+        logger.info(f'station list: {stations}')
+        return stations 
+    except Exception as e: 
+        logger.error(f'get_stations异常 {e}')
+        return None
+    
 
 @router.get("/realtime-kpi")
 async def get_solar_realtime_data():
@@ -86,65 +157,66 @@ async def get_solar_realtime_data():
         solar_manager.reset_connection()
         raise HTTPException(status_code=500, detail="调取光伏电站实时指标失败，正在尝试重连重试")
 
-@router.get("/history")
-async def get_solar_history(
-    time_type: str = Query(..., description="查询类型: hour, day, month"),
-    station_code: str = "NE=12345678"  # 你的华为电站编号
-):
-    """
-    【图表专用接口】根据小时、天、月，清洗华为光伏数据，统一输出给前端 ECharts
-    """
-    # 💡 真实业务中：这里需要调 client.get_history_kpi(...) 
-    # 华为接口需要传入开始/结束时间戳（毫秒），并且 hour, day, month 的指标 ID 略有不同（如 product_power, day_cap）
+
+# @router.get("/history")
+# async def get_solar_history(
+#     time_type: str = Query(..., description="查询类型: hour, day, month"),
+#     station_code: str = "NE=12345678"  # 你的华为电站编号
+# ):
+#     """
+#     【图表专用接口】根据小时、天、月，清洗华为光伏数据，统一输出给前端 ECharts
+#     """
+#     # 💡 真实业务中：这里需要调 client.get_history_kpi(...) 
+#     # 华为接口需要传入开始/结束时间戳（毫秒），并且 hour, day, month 的指标 ID 略有不同（如 product_power, day_cap）
     
-    x_axis = []
-    y_axis = []
+#     x_axis = []
+#     y_axis = []
     
-    now = datetime.now()
+#     now = datetime.now()
     
-    try:
-        if time_type == "hour":
-            # 🕒 按小时：展示今天 0点 到 当前小时 的发电功率趋势 (kW)
-            current_hour = now.hour
-            for h in range(0, current_hour + 1):
-                x_axis.append(f"{h}:00")
-                # 模拟光伏曲线：中午功率最高，早晚为 0
-                if 6 <= h <= 18:
-                    power = round(random.uniform(50.0, 150.0) * (1 - abs(12-h)/7), 2)
-                    y_axis.append(max(0.0, power))
-                else:
-                    y_axis.append(0.0)
-            chart_title = "当日实时发电功率 (kW)"
-            series_name = "实时功率"
+#     try:
+#         if time_type == "hour":
+#             # 🕒 按小时：展示今天 0点 到 当前小时 的发电功率趋势 (kW)
+#             current_hour = now.hour
+#             for h in range(0, current_hour + 1):
+#                 x_axis.append(f"{h}:00")
+#                 # 模拟光伏曲线：中午功率最高，早晚为 0
+#                 if 6 <= h <= 18:
+#                     power = round(random.uniform(50.0, 150.0) * (1 - abs(12-h)/7), 2)
+#                     y_axis.append(max(0.0, power))
+#                 else:
+#                     y_axis.append(0.0)
+#             chart_title = "当日实时发电功率 (kW)"
+#             series_name = "实时功率"
 
-        elif time_type == "day":
-            # 📅 按日：展示最近 15 天每天的发电量 (kWh)
-            for i in range(14, -1, -1):
-                date_str = (now - timedelta(days=i)).strftime("%m-%d")
-                x_axis.append(date_str)
-                y_axis.append(round(random.uniform(300.0, 600.0), 1))
-            chart_title = "近15日发电量趋势 (kWh)"
-            series_name = "日发电量"
+#         elif time_type == "day":
+#             # 📅 按日：展示最近 15 天每天的发电量 (kWh)
+#             for i in range(14, -1, -1):
+#                 date_str = (now - timedelta(days=i)).strftime("%m-%d")
+#                 x_axis.append(date_str)
+#                 y_axis.append(round(random.uniform(300.0, 600.0), 1))
+#             chart_title = "近15日发电量趋势 (kWh)"
+#             series_name = "日发电量"
 
-        elif time_type == "month":
-            # 🗓️ 按月：展示今年 1月 到当前月份的发电量 (kWh)
-            current_month = now.month
-            for m in range(1, current_month + 1):
-                x_axis.append(f"{m}月")
-                y_axis.append(round(random.uniform(8000.0, 15000.0), 1))
-            chart_title = "今年各月发电量统计 (kWh)"
-            series_name = "月发电量"
-        else:
-            raise HTTPException(status_code=400, detail="不支持的查询类型")
+#         elif time_type == "month":
+#             # 🗓️ 按月：展示今年 1月 到当前月份的发电量 (kWh)
+#             current_month = now.month
+#             for m in range(1, current_month + 1):
+#                 x_axis.append(f"{m}月")
+#                 y_axis.append(round(random.uniform(8000.0, 15000.0), 1))
+#             chart_title = "今年各月发电量统计 (kWh)"
+#             series_name = "月发电量"
+#         else:
+#             raise HTTPException(status_code=400, detail="不支持的查询类型")
 
-        # 统一输出极其干净的数据结构，前端直接闭眼渲染
-        return {
-            "status": "SUCCESS",
-            "title": chart_title,
-            "series_name": series_name,
-            "xAxis": x_axis,
-            "yAxis": y_axis
-        }
+#         # 统一输出极其干净的数据结构，前端直接闭眼渲染
+#         return {
+#             "status": "SUCCESS",
+#             "title": chart_title,
+#             "series_name": series_name,
+#             "xAxis": x_axis,
+#             "yAxis": y_axis
+#         }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"调取华为历史指标失败: {e}")
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"调取华为历史指标失败: {e}")

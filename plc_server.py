@@ -15,7 +15,7 @@ from models import AlarmLog
 import models
 from routers import alarm_router, ca_config_router, power_router, \
     temp_router,venti_router, home_router, gran_router, gas_router, \
-    video_router, silo_access_router,auth_router
+    video_router, silo_access_router,auth_router, solar_router
 from routers.auth_router import get_password_hash
 from schemas import AlarmLogCreate
 from util import  build_influx_line_protocol, get_start_reg_addr, registers_to_val
@@ -209,6 +209,7 @@ app.include_router(gas_router.router, tags=["气体检测模块"])
 app.include_router(video_router.router, tags=["安防监控模块"])
 app.include_router(silo_access_router.router, tags=["粮仓门禁代理"])
 app.include_router(auth_router.router, tags=["登录模块"])
+app.include_router(solar_router.router, tags=["太阳能供电模块"])
 # 1. 解决跨域问题（允许 Vue 前端和手机端访问）
 app.add_middleware(
     CORSMiddleware,

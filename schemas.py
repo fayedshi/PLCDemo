@@ -234,3 +234,10 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     role: str
+
+
+# 5. 请求体数据校验模型
+class UpdatePasswordSchema(BaseModel):
+    old_password: str = Field(..., description="原始密码")
+    new_password: str = Field(..., description="新密码")
+    confirm_password: str = Field(..., description="确认新密码")
