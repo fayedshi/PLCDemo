@@ -1,4 +1,4 @@
-import pyhfs
+# import pyhfs
 
 # 🔑 你的华为北向专门账号与密码（参见上一步在“北向管理”中创建的凭证）
 USER = "north_api_user"

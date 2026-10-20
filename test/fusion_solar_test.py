@@ -1,6 +1,6 @@
 import asyncio
 import json
-from pyhfs import FusionSolarClient
+# from pyhfs import FusionSolarClient
 
 async def main():
     # 1. 替换为你自己的华为北向接口服务器域名、API账号和密码

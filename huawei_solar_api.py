@@ -1,5 +1,5 @@
 
-from typing import Optional
+from typing import Dict, Optional
 import time
 
 import httpx
@@ -11,9 +11,9 @@ class HuaweiSolarSingleAccountAPI:
         
         # 内部缓存唯一的 Token 状态
         self.xsrf_token: Optional[str] = None
-        self.cookie_str: Optional[str] = None
+        # self.cookie_str: Optional[str] = None
         self.last_login_time: float = 0
-        self.token_expiry: float = 1200  # 假设华为 Token 20分钟过期
+        self.token_expiry: float = 1800  # 假设华为 Token 20分钟过期
 
     async def _ensure_logged_in(self, username: str, system_code: str):
         """内部方法：确保当前有可用的 Token，如果失效了才去重新登录（保活机制）"""
@@ -34,13 +34,13 @@ class HuaweiSolarSingleAccountAPI:
         
         if res_json.get("failCode") == 0 or res_json.get("success", True):
             self.xsrf_token = response.cookies.get("XSRF-TOKEN")
-            self.cookie_str = response.headers.get("Set-Cookie")
+            # self.cookie_str = response.headers.get("Set-Cookie")
             self.last_login_time = now
             
             # 把共享的 Token 写入全局 Client
             self.client.headers.update({
                 "XSRF-TOKEN": self.xsrf_token,
-                "Cookie": self.cookie_str,
+                # "Cookie": self.cookie_str,
                 "Content-Type": "application/json"
             })
             print("全局唯一 Token 刷新/获取成功！")

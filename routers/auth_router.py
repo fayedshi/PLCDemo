@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import List
 
 from auth_util import is_admin
+from enums.enum_user_role import UserRole
 import models, schemas, database
 from logger.demo_logger import logger
 
@@ -62,9 +63,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     return user
 
 # 依赖项：验证管理员权限
-def check_admin(current_user: models.User = Depends(get_current_user)):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="权限不足，仅限管理员操作")
+def check_super_admin(current_user: models.User = Depends(get_current_user)):
+    if current_user.role != UserRole.SUPER_ADMIN.name:
+        raise HTTPException(status_code=403, detail="权限不足，仅限超级管理员操作")
     return current_user
 
 # --- 路由实现 ---
@@ -75,7 +76,7 @@ def check_admin(current_user: models.User = Depends(get_current_user)):
 
 # 2. 登录接口
 @router.post("/api/login", response_model=schemas.Token)
-async def login(form_data: schemas.UserCreate, db: AsyncSession = Depends(database.get_db)):
+async def login(form_data: schemas.UserLogin, db: AsyncSession = Depends(database.get_db)):
 
     # stmt = select(CAModuleModel).where(CAModuleModel.id == config_id)
         
@@ -94,20 +95,23 @@ async def login(form_data: schemas.UserCreate, db: AsyncSession = Depends(databa
     access_token = create_access_token(data={"sub": user.username, "role": user.role})
     return {"access_token": access_token, "token_type": "bearer", "role": user.role}
 
-# 3. 用户列表（仅管理员）
+# 3. 用户列表（仅超级管理员）
 @router.get("/api/users", response_model=List[schemas.UserOut])
-async def get_users(db: AsyncSession = Depends(database.get_db), current_user = Depends(check_admin)):
+async def get_users(db: AsyncSession = Depends(database.get_db), current_user = Depends(check_super_admin)):
     stmt = select(models.User).order_by(models.User.id.desc())
     result = await db.execute(stmt)
     # scalars().all() 获取对象列表，若为空则自动返回空数组 `[]`
     users = result.scalars().all()
     return users
 
-    # return db.query(models.User).all()
+@router.get("/api/roles")
+async def get_roles():
+    roles = [{'name':role.name, 'desc': role.description} for role in UserRole]
+    return roles
 
-# 4. 创建用户（仅管理员）
+# 4. 创建用户（仅超级管理员）
 @router.post("/api/users", response_model=schemas.UserOut)
-async def create_user(user: schemas.UserCreate, db: AsyncSession = Depends(database.get_db), current_user: models.User = Depends(check_admin)):
+async def create_user(user: schemas.UserCreate, db: AsyncSession = Depends(database.get_db), current_user: models.User = Depends(check_super_admin)):
     stmt = select(models.User).where(models.User.username == user.username)
     result = await db.execute(stmt)
         # scalars().all() 获取对象列表，若为空则自动返回空数组 `[]`
@@ -130,7 +134,7 @@ async def create_user(user: schemas.UserCreate, db: AsyncSession = Depends(datab
 
 # 5. 删除用户（仅管理员）
 @router.delete("/api/users/{user_id}")
-async def delete_user(user_id: int, db: AsyncSession = Depends(database.get_db), current_user: models.User = Depends(check_admin)):
+async def delete_user(user_id: int, db: AsyncSession = Depends(database.get_db), current_user: models.User = Depends(check_super_admin)):
     # user = db.query(models.User).filter(models.User.id == user_id).first()
     stmt = select(models.User).where(models.User.id == user_id)
     result = await db.execute(stmt)
@@ -140,7 +144,7 @@ async def delete_user(user_id: int, db: AsyncSession = Depends(database.get_db),
     
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
-    if user.username == "admin":
+    if user.role == UserRole.SUPER_ADMIN.name:
         raise HTTPException(status_code=400, detail="系统内置超级管理员不能删除")
     stmt = delete(models.User).where(models.User.id == user_id)        
     result = await db.execute(stmt)
@@ -151,18 +155,18 @@ async def delete_user(user_id: int, db: AsyncSession = Depends(database.get_db),
 
 
 # 6. 修改密码核心 API
-@router.post("/api/v1/auth/password/update")
+@router.post("/api/auth/password/update")
 async def update_password(data: schemas.UpdatePasswordSchema, current_user: models.User = Depends(get_current_user), db: AsyncSession = Depends(database.get_db)):
     # 验证两次输入的新密码是否一致
     if data.new_password != data.confirm_password:
         raise HTTPException(status_code=400, detail="两次输入的新密码不一致")
     
     # 验证旧密码是否正确
-    if not password_hash.verify(data.old_password, current_user.password_hash):
+    if not password_hash.verify(data.old_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="旧密码输入错误，请重新输入")
         
     # 验证新密码是否和旧密码相同（安全策略）
-    if password_hash.verify(data.new_password, current_user.password_hash):
+    if password_hash.verify(data.new_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
         
     # 密码强度校验（等保合规要求：长度>=8位，且包含大写字母、小写字母、数字及特殊字符）
@@ -174,7 +178,7 @@ async def update_password(data: schemas.UpdatePasswordSchema, current_user: mode
         )
         
     # 更新密码并保存
-    current_user.password_hash = password_hash.hash(data.new_password)
+    current_user.hashed_password = password_hash.hash(data.new_password)
     current_user.is_first_login = False
     current_user.last_password_change = datetime.now()
     

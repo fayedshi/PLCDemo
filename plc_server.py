@@ -10,6 +10,7 @@ from pymodbus.client import AsyncModbusTcpClient
 from contextlib import asynccontextmanager
 import httpx
 from config import settings
+from enums.enum_user_role import UserRole
 from enums.enum_alarm_event import AlarmType
 from models import AlarmLog
 import models
@@ -106,83 +107,15 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
 
     logger.info("connected to mysql")
-    # await init_admin()
+    await init_admin()
     logger.info(f'set up admin')
     logger.info("\n--- 📊 当前环境配置变量 ---")
     logger.info(f"后端服务 (influx_DB_URL): {app.state.influx_db_url}")
 
     try:
+        # polling_tasks = await initialize()
         polling_tasks=[]
-        for index, gran in enumerate(granaries):
-            silo_plc_clients=[]
-            plc_client_main = AsyncModbusTcpClient(gran['PLC_IP'], port=gran['PLC_PORT'], 
-                reconnect_delay=1.0,
-                reconnect_delay_max=120 
-            )
-            logger.info("【系统启动】正在尝试与 PLC 建立唯一的长连接...")
-            await plc_client_main.connect()
-            silo_plc_clients.append(plc_client_main)
-            app.state.plc_conns[index]['MAIN']=plc_client_main
-            logger.info(f"PLC house {gran['code']}【lifespan】物理通道已建立")
-            if 'gas_detect' in gran:
-                plc_client_gas = AsyncModbusTcpClient(gran['gas_detect']['PLC_IP'], port=gran['gas_detect']['PLC_PORT'], 
-                    reconnect_delay=1.0,
-                    reconnect_delay_max=120 
-                )
-                logger.info("【系统启动】正在尝试与 PLC_GAS的长连接...")
-                await plc_client_gas.connect()
-                logger.info(f"PLC_GAS house {gran['code']}【lifespan】物理通道已建立")
-                silo_plc_clients.append(plc_client_gas)
-                app.state.plc_conns[index]['GAS']=plc_client_gas
-
-            # logger.info(f'index: {index}')
-            # app.state.num_ticks[index]=1
-            # 从数据库中读取该仓房的温度报警上限
-            gran_list= await read_granary_max_temp(gran['code'])
-            if gran_list:
-                app.state.TEMP_UPPER_LIMIT_LIST[index] = gran_list[0].max_temp
-                logger.info(f'temp upper limit {app.state.TEMP_UPPER_LIMIT_LIST[index]}')
-            else:
-                raise Exception('【ERROR：无法读取仓房温度上限】')
-            
-            # 从配置文件中读取设备地址
-            logger.info(f'current gran {gran}')
-            app.state.dev_addrs_objects.append(gran['devices_addr'])
-            logger.info(app.state.dev_addrs_objects)
-            
-            # polling_job = asyncio.create_task(plc_polling_task(index, plc_client, gran['code']))
-
-            task_check_plc_connection=asyncio.create_task(check_plc_connection(index, silo_plc_clients, gran['code']))
-
-            task_read_dev_states=asyncio.create_task(check_dev_states(index, plc_client_main, gran['code']))
-
-            task_read_temp=asyncio.create_task(read_temp(index, plc_client_main, gran['code']))
-            task_check_alarm =asyncio.create_task(check_temp_alarm(AlarmType.TEMP_HIGH.name, gran['code'], index))
-            task_store_temp=asyncio.create_task(store_temp(index, gran['code']))
-
-            task_read_humid=asyncio.create_task(read_humid(index, plc_client_main, gran['code']))
-            task_store_humid=asyncio.create_task(store_humid(index, gran['code']))
-            
-            task_read_power=asyncio.create_task(read_power(index, plc_client_main, gran['code']))
-            task_store_power=asyncio.create_task(store_power(index, gran['code']))
-
-            # gas concentration reading
-            if 'gas_detect' in gran:
-                task_read_gas=asyncio.create_task(read_gas(index, plc_client_gas, gran['code']))
-                task_store_gas=asyncio.create_task(store_gas(index, gran['code']))
-
-            polling_tasks.extend([task_check_plc_connection, task_read_temp, task_check_alarm, 
-                                    task_store_temp,
-                                    task_read_humid, 
-                                    task_store_humid, 
-                                    task_read_power, 
-                                    task_store_power,
-                                    task_read_gas,
-                                    task_store_gas,
-                                    task_read_dev_states
-                                    ]) 
         yield
-
     finally:
         logger.info("正在断开 所有PLC 连接...")
         for task in polling_tasks:
@@ -219,6 +152,79 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+async def initialize():
+    polling_tasks=[]
+    for index, gran in enumerate(granaries):
+        silo_plc_clients=[]
+        plc_client_main = AsyncModbusTcpClient(gran['PLC_IP'], port=gran['PLC_PORT'], 
+            reconnect_delay=1.0,
+            reconnect_delay_max=120 
+        )
+        logger.info("【系统启动】正在尝试与 PLC 建立唯一的长连接...")
+        await plc_client_main.connect()
+        silo_plc_clients.append(plc_client_main)
+        app.state.plc_conns[index]['MAIN']=plc_client_main
+        logger.info(f"PLC house {gran['code']}【lifespan】物理通道已建立")
+        if 'gas_detect' in gran:
+            plc_client_gas = AsyncModbusTcpClient(gran['gas_detect']['PLC_IP'], port=gran['gas_detect']['PLC_PORT'], 
+                reconnect_delay=1.0,
+                reconnect_delay_max=120 
+            )
+            logger.info("【系统启动】正在尝试与 PLC_GAS的长连接...")
+            await plc_client_gas.connect()
+            logger.info(f"PLC_GAS house {gran['code']}【lifespan】物理通道已建立")
+            silo_plc_clients.append(plc_client_gas)
+            app.state.plc_conns[index]['GAS']=plc_client_gas
+
+        # logger.info(f'index: {index}')
+        # app.state.num_ticks[index]=1
+        # 从数据库中读取该仓房的温度报警上限
+        gran_list= await read_granary_max_temp(gran['code'])
+        if gran_list:
+            app.state.TEMP_UPPER_LIMIT_LIST[index] = gran_list[0].max_temp
+            logger.info(f'temp upper limit {app.state.TEMP_UPPER_LIMIT_LIST[index]}')
+        else:
+            raise Exception('【ERROR：无法读取仓房温度上限】')
+        
+        # 从配置文件中读取设备地址
+        logger.info(f'current gran {gran}')
+        app.state.dev_addrs_objects.append(gran['devices_addr'])
+        logger.info(app.state.dev_addrs_objects)
+        
+        # polling_job = asyncio.create_task(plc_polling_task(index, plc_client, gran['code']))
+
+        task_check_plc_connection=asyncio.create_task(check_plc_connection(index, silo_plc_clients, gran['code']))
+
+        task_read_dev_states=asyncio.create_task(check_dev_states(index, plc_client_main, gran['code']))
+
+        task_read_temp=asyncio.create_task(read_temp(index, plc_client_main, gran['code']))
+        task_check_alarm =asyncio.create_task(check_temp_alarm(AlarmType.TEMP_HIGH.name, gran['code'], index))
+        task_store_temp=asyncio.create_task(store_temp(index, gran['code']))
+
+        task_read_humid=asyncio.create_task(read_humid(index, plc_client_main, gran['code']))
+        task_store_humid=asyncio.create_task(store_humid(index, gran['code']))
+        
+        task_read_power=asyncio.create_task(read_power(index, plc_client_main, gran['code']))
+        task_store_power=asyncio.create_task(store_power(index, gran['code']))
+
+        # gas concentration reading
+        if 'gas_detect' in gran:
+            task_read_gas=asyncio.create_task(read_gas(index, plc_client_gas, gran['code']))
+            task_store_gas=asyncio.create_task(store_gas(index, gran['code']))
+
+        polling_tasks.extend([task_check_plc_connection, task_read_temp, task_check_alarm, 
+                task_store_temp,
+                task_read_humid, 
+                task_store_humid, 
+                task_read_power, 
+                task_store_power,
+                task_read_gas,
+                task_store_gas,
+                task_read_dev_states
+                ]) 
+        
+    return polling_tasks
+
 async def init_admin():
     async with AsyncSessionLocal() as session:
         try:
@@ -231,7 +237,7 @@ async def init_admin():
                 admin_user = models.User(
                     username="admin",
                     hashed_password=get_password_hash("admin123"),
-                    role="admin"
+                    role=UserRole.SUPER_ADMIN.name
                 )
                 session.add(admin_user)
                 await session.commit()

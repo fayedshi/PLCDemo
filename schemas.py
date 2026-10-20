@@ -217,6 +217,10 @@ class UserBase(BaseModel):
     username: str
     role: str
 
+class UserLogin(BaseModel):
+    username: str
+    password: str    
+
 class UserCreate(UserBase):
     password: str
 
