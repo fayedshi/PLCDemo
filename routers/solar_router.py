@@ -2,26 +2,20 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 import httpx
 # import pyhfs
 from typing import Dict, Any
+import httpx
+import time
+from typing import Dict, Optional
+from date_util import datetime_to_ms, ms_to_datetime
+from huawei_solar_api import solar_api_instance
 
 import requests
-
-
 from logger.demo_logger import logger
 
 
 # router = APIRouter(prefix="/api/v1/solar", tags=["华为光伏数据"])
 router = APIRouter(tags=["华为光伏数据"])
-# ==================== 🔑 华为北向连接单例管理器 ====================
-import httpx
-import time
-from typing import Dict, Optional
-from huawei_solar_api import solar_api_instance
-
-
 
 BASE_URL = "https://cn.fusionsolar.huawei.com/thirdData"
-USERNAME = "north_api_user"
-PASSWORD = "north@123"
 
 async def get_async_client():
     async with httpx.AsyncClient() as client:
@@ -47,7 +41,7 @@ async def fetch_xsrftoken(client: httpx.AsyncClient):
     
         # print(f"reponse: {response.text[:500]}")
         res_json = response.json()
-        print(f"服务器返回内容: {res_json}，fail code{res_json['failCode']}")
+        print(f"服务器返回内容: {res_json}, fail code{res_json['failCode']}")
 
         if res_json.get("success") is True:
             xsrf_token = response.headers.get("xsrf-token")
@@ -63,9 +57,9 @@ async def fetch_xsrftoken(client: httpx.AsyncClient):
     
 
 @router.get("/api/stations")
-async def get_stations(client: httpx.AsyncClient = Depends(get_async_client)):
+async def get_stations():
     
-    # try:
+    try:
     #     xsrf_token = await fetch_xsrftoken(client)
     #     if not xsrf_token:
     #         raise Exception('未获取token')
@@ -83,26 +77,8 @@ async def get_stations(client: httpx.AsyncClient = Depends(get_async_client)):
     #         stations.append(plant)
     #     logger.info(f'station list: {stations}')
     #     return stations 
-    # except Exception as e: 
-    #     logger.error(f'get_stations异常 {e}')
-    #     return None
-    
-    solar_api_instance.get_station_list(USERNAME,PASSWORD,1)
-    
-# 按小时，日、天，月
-@router.get("/api/power")
-async def get_power_supply_data(station, freq,  client: httpx.AsyncClient = Depends(get_async_client)):
-    
-    try:
-        xsrf_token = await fetch_xsrftoken(client)
-        if not xsrf_token:
-            raise Exception('未获取token')
-        # todo: more than 1 page
-        stations_resp = await client.post(f"{BASE_URL}/stations",
-                headers={"XSRF-TOKEN": xsrf_token, "Content-Type": "application/json"},
-                json={"pageNo": 1} # 最小请求体，查询第1页数据 不传 并网开始时间，则返回分页数据"gridConnectedStartTime":1701561600000
-            )
-        station_json= stations_resp.json()
+   
+        station_json = await solar_api_instance.get_station_list(1)
         stations=[]
         for station in station_json.get("data").get("list", []):
             plant={}
@@ -114,6 +90,29 @@ async def get_power_supply_data(station, freq,  client: httpx.AsyncClient = Depe
     except Exception as e: 
         logger.error(f'get_stations异常 {e}')
         return None
+    
+# 按小时，日、天，月
+@router.get("/api/solar")
+async def get_power_supply_data(plant_code, dimension, input_time):
+    
+    try:
+        millisecs= datetime_to_ms(input_time, fmt="%Y-%m-%dT%H:%M:%S.%fZ")
+        logger.info(f'millisc {millisecs}')
+        power_json = await solar_api_instance.get_power_by_dimension(plant_code,dimension, millisecs)
+        # stations=[]
+        data_items=list(power_json.get("data"))
+        dim_fmt_map={'Day':'%Y-%m-%d',"Hour": '%Y-%m-%d %H', 'Month': '%Y-%m', 'Year':'%Y'}
+        # logger.info(f"collecttime:{item['dataItemMap'].get('collectTime')}")
+        power_list= [{'time': ms_to_datetime(item['collectTime'],dim_fmt_map[dimension]), 'power': item["dataItemMap"].get('PVYield',0)}  for item in data_items]
+            # plant={}
+            # plant['code']=
+            # plant['name']=item['plantName']
+            # stations.append(plant)
+        logger.info(f'powerlist: {power_list}')
+        return power_list 
+    except Exception as e: 
+        logger.error(f'get_power_supply_data异常 {e}')
+        return []
     
 
 @router.get("/realtime-kpi")

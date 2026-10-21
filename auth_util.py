@@ -3,9 +3,11 @@ from fastapi.security import OAuth2PasswordBearer
 import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from enums.enum_user_role import UserRole
 import database
 import models
+import random
+
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 SECRET_KEY = "GRAIN_ELEVATOR_SUPER_SECRET_KEY"
@@ -46,7 +48,16 @@ def is_admin(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 无效或已过期")
     # print(f'payload {payload}')
     role = payload.get("role")
-    if not role or role != "admin":
-        # print(f'role is: {role}')
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足，仅限管理员操作")
-    return payload
+    if role and role in (UserRole.SUPER_ADMIN.name,UserRole.ADMIN.name):
+        return payload
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足，仅限管理员操作")
+
+
+
+def generate_password():
+    chars = "ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz23456789!@#$%^&*"
+    return "".join(random.choices(chars, k=8))
+
+# 测试输出
+print(generate_password()) # 例如: "pB3#7mG$"
+    

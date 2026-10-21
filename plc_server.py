@@ -113,8 +113,8 @@ async def lifespan(app: FastAPI):
     logger.info(f"后端服务 (influx_DB_URL): {app.state.influx_db_url}")
 
     try:
-        # polling_tasks = await initialize()
-        polling_tasks=[]
+        polling_tasks = await initialize()
+        # polling_tasks=[]
         yield
     finally:
         logger.info("正在断开 所有PLC 连接...")

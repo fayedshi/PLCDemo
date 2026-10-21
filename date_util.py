@@ -64,6 +64,8 @@ def ms_to_datetime(ms_timestamp: int, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
     :return: 格式化后的时间字符串
     """
     # 1. 将13位毫秒转为秒级浮点数
+
+    # print('input time', ms_timestamp)
     seconds = ms_timestamp / 1000.0
     
     # 2. 将秒级时间戳转换为带北京时区的 datetime 对象
@@ -78,15 +80,18 @@ if __name__ == "__main__":
     # 测试你刚才要的 2026-10-10
     t1 = datetime_to_ms("2025-10-10 00:00:00")
     print(f"2025-10-10 00:00:00 转换结果: {t1}")  # 输出: 1791561600000
-    
-    t2 = datetime_to_ms("2026-10-10 23:59:59")
-    print(f"2026-10-10 23:59:59 转换结果: {t2}")  # 输出: 1791647999000
+
+    t2="2026-10-10 20:59:59"
+    print(f"{t2} 转换结果: {datetime_to_ms(t2)}")  # 输出: 1791647999000
 
     # 快捷支持其他格式
-    t3 = datetime_to_ms("20261010", fmt="%Y%m%d")
-    print(f"纯数字日期 20261010 转换结果: {t3}")    # 输出: 1791561600000
+    t3 = '2026-09-07T16:00:00.000Z' 
+    t3_milss= datetime_to_ms(t3, fmt="%Y-%m-%dT%H:%M:%S.%fZ")
+    print(f"t3 {t3}  转换结果: {t3_milss}")
     
     print(f"当前时间毫秒戳: {get_current_ms()}")
 
-    print(f'1501862400000 to  time: {ms_to_datetime(1501862400000)}')
+    mills= 1791561600000
+    print(f'{mills} to  time: {ms_to_datetime(mills)}')
     print(f'1503046597854 to  time: {ms_to_datetime(1501884000000)}')
+    print(f'1503046597854 to  time: {ms_to_datetime(1501884000000, '%Y')}')

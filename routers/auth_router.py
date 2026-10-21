@@ -13,7 +13,7 @@ import jwt
 from datetime import datetime, timedelta
 from typing import List
 
-from auth_util import is_admin
+from auth_util import generate_password, is_admin
 from enums.enum_user_role import UserRole
 import models, schemas, database
 from logger.demo_logger import logger
@@ -194,14 +194,12 @@ async def update_password(data: schemas.UpdatePasswordSchema, current_user: mode
 #     # 这里做模拟演示，假设当前请求的用户具备管理员权限
 #     return current_user
 
-# 2. 管理员重置密码接口
-@router.post("/api/v1/admin/users/{user_id}/reset-password")
-async def admin_reset_password(
-    user_id: int, 
-    db: AsyncSession = Depends(database.get_db), 
-    admin_info = Depends(is_admin) # 拦截器：确保只有管理员能调用
+# 2. 管理员重置密码接口, 拦截器：确保只有管理员能调用
+@router.post("/api/admin/users/{user_id}/reset-password", )
+async def admin_reset_password(user_id: int, db: AsyncSession = Depends(database.get_db), admin_info = Depends(is_admin)
 ):
     # 查寻要被重置密码的保管员
+    logger.info(f'to reset user with id {user_id}')
     stmt = select(models.User).where(models.User.id == user_id)
     result = await db.execute(stmt)
     # scalars().all() 获取对象列表，若为空则自动返回空数组 `[]`
@@ -210,18 +208,18 @@ async def admin_reset_password(
         raise HTTPException(status_code=404, detail="未找到该职工账号")
         
     # 设置一个符合等保规范的默认初始化密码
-    DEFAULT_INITIAL_PASSWORD = "Reset@2026#Grain"
-    
+    # DEFAULT_INITIAL_PASSWORD = "Reset@2026#Grain"
+    DEFAULT_INITIAL_PASSWORD = generate_password()
     # 核心逻辑：重置密码，并强制将其 is_first_login 设为 True
-    keeper_user.password_hash = password_hash.hash(DEFAULT_INITIAL_PASSWORD)
-    keeper_user.is_first_login = True  # 关键：标记为首次登录/需要强改状态
-    keeper_user.last_password_change = datetime.utcnow()
+    keeper_user.hashed_password = password_hash.hash(DEFAULT_INITIAL_PASSWORD)
+    # keeper_user.is_first_login = True  # todo 1021：关键：标记为首次登录/需要强改状态, 
+    # keeper_user.last_password_change = datetime.now()
     
     await db.commit()
     await db.refresh(keeper_user) 
     return {
         "code": 200, 
-        "message": f"职工 [{keeper_user.username}] 的密码已成功重置！",
+        "message": f"用户 [{keeper_user.username}] 的密码已成功重置！",
         "data": {
             "initial_password": DEFAULT_INITIAL_PASSWORD # 返回给前端展示，方便管理员复制告知保管员
         }
