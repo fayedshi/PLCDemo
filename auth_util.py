@@ -7,7 +7,7 @@ from enums.enum_user_role import UserRole
 import database
 import models
 import random
-
+import string
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 SECRET_KEY = "GRAIN_ELEVATOR_SUPER_SECRET_KEY"
@@ -53,11 +53,35 @@ def is_admin(token: str = Depends(oauth2_scheme)):
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足，仅限管理员操作")
 
 
+def generate_secure_password(length=8):
+    if length < 4:
+        raise ValueError("密码长度至少需要4位以包含所有必要的字符类型")
+        
+    # 定义4种基础字符集
+    lower = string.ascii_lowercase    # 小写字母
+    upper = string.ascii_uppercase    # 大写字母
+    digits = string.digits            # 数字
+    special = '!@#$%'      # 特殊符号 (如 !, @, #, $ 等)  原：string.punctuation
 
-def generate_password():
-    chars = "ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz23456789!@#$%^&*"
-    return "".join(random.choices(chars, k=8))
+    print(f'special {special}')
+    # 步骤1：确保每种类型至少包含一个字符
+    password = [
+        random.choice(lower),
+        random.choice(upper),
+        random.choice(digits),
+        random.choice(special)
+    ]
+    
+    # 步骤2：将所有字符组合，随机填满剩余的长度
+    all_characters = lower + upper + digits + special
+    password += [random.choice(all_characters) for _ in range(length - 4)]
+    # 步骤3：打乱列表顺序，防止前4位出现固定规律
+    random.shuffle(password)
+    # 组合成字符串返回
+    return "".join(password)
 
-# 测试输出
-print(generate_password()) # 例如: "pB3#7mG$"
+# 调用函数生成8位密码
+print(generate_secure_password(8))
+# 输出示例: 0b!y5iSW
+
     
