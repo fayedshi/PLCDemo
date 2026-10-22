@@ -106,7 +106,7 @@ async def get_users(db: AsyncSession = Depends(database.get_db), current_user = 
 
 @router.get("/api/roles")
 async def get_roles():
-    roles = [{'name':role.name, 'desc': role.description} for role in UserRole]
+    roles = [{'name':role.name, 'desc': role.description} for role in UserRole if role.code>1] #无法添加super amdin
     return roles
 
 # 4. 创建用户（仅超级管理员）
