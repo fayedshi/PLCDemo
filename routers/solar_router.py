@@ -1,14 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException
 import httpx
-# import pyhfs
-from typing import Dict, Any
-import httpx
-import time
-from typing import Dict, Optional
 from date_util import datetime_to_ms, ms_to_datetime
 from huawei_solar_api import solar_api_instance
 
-import requests
 from logger.demo_logger import logger
 
 
@@ -16,6 +10,8 @@ from logger.demo_logger import logger
 router = APIRouter(tags=["华为光伏数据"])
 
 BASE_URL = "https://cn.fusionsolar.huawei.com/thirdData"
+dim_fmt_map={'Day':'%Y-%m-%d',"Hour": '%Y-%m-%d %H', 'Month': '%Y-%m', 'Year':'%Y'}
+
 
 async def get_async_client():
     async with httpx.AsyncClient() as client:
@@ -58,26 +54,7 @@ async def fetch_xsrftoken(client: httpx.AsyncClient):
 
 @router.get("/api/stations")
 async def get_stations():
-    
     try:
-    #     xsrf_token = await fetch_xsrftoken(client)
-    #     if not xsrf_token:
-    #         raise Exception('未获取token')
-    #     # todo: more than 1 page
-    #     stations_resp = await client.post(f"{BASE_URL}/stations",
-    #             headers={"XSRF-TOKEN": xsrf_token, "Content-Type": "application/json"},
-    #             json={"pageNo": 1} # 最小请求体，查询第1页数据 不传 并网开始时间，则返回分页数据"gridConnectedStartTime":1701561600000
-    #         )
-    #     station_json= stations_resp.json()
-    #     stations=[]
-    #     for station in station_json.get("data").get("list", []):
-    #         plant={}
-    #         plant['code']=station['plantCode']
-    #         plant['name']=station['plantName']
-    #         stations.append(plant)
-    #     logger.info(f'station list: {stations}')
-    #     return stations 
-   
         station_json = await solar_api_instance.get_station_list(1)
         stations=[]
         for station in station_json.get("data").get("list", []):
@@ -89,7 +66,7 @@ async def get_stations():
         return stations 
     except Exception as e: 
         logger.error(f'get_stations异常 {e}')
-        return None
+        raise HTTPException(status_code=500, detail=f"访问电站api异常，{e}")
     
 # 按小时，日、天，月
 @router.get("/api/solar")
@@ -101,7 +78,6 @@ async def get_power_supply_data(plant_code, dimension, input_time):
         power_json = await solar_api_instance.get_power_by_dimension(plant_code,dimension, millisecs)
         # stations=[]
         data_items=list(power_json.get("data"))
-        dim_fmt_map={'Day':'%Y-%m-%d',"Hour": '%Y-%m-%d %H', 'Month': '%Y-%m', 'Year':'%Y'}
         # logger.info(f"collecttime:{item['dataItemMap'].get('collectTime')}")
         power_list= [{'time': ms_to_datetime(item['collectTime'],dim_fmt_map[dimension]), 'power': item["dataItemMap"].get('PVYield',0)}  for item in data_items]
             # plant={}
@@ -112,7 +88,7 @@ async def get_power_supply_data(plant_code, dimension, input_time):
         return power_list 
     except Exception as e: 
         logger.error(f'get_power_supply_data异常 {e}')
-        return []
+        raise HTTPException(status_code=500, detail=f"获取kpi数据api异常:{e}")
     
 
 @router.get("/realtime-kpi")

@@ -15,7 +15,7 @@ from enums.enum_alarm_event import AlarmType
 from models import AlarmLog
 import models
 from routers import alarm_router, ca_config_router, power_router, \
-    temp_router,venti_router, home_router, gran_router, gas_router, \
+    temp_router,venti_router, dashboard_router, gran_router, gas_router, \
     video_router, silo_access_router,auth_router, solar_router
 from routers.auth_router import get_password_hash
 from schemas import AlarmLogCreate
@@ -108,9 +108,7 @@ async def lifespan(app: FastAPI):
 
     logger.info("connected to mysql")
     await init_admin()
-    logger.info(f'set up admin')
     logger.info("\n--- 📊 当前环境配置变量 ---")
-    logger.info(f"后端服务 (influx_DB_URL): {app.state.influx_db_url}")
 
     try:
         polling_tasks = await initialize()
@@ -131,7 +129,7 @@ async def lifespan(app: FastAPI):
                 logger.info(f"###{plc_client}采集任务已停止，与PLC的连接已释放完毕")
 
 app = FastAPI(lifespan=lifespan)
-app.include_router(home_router.router, tags=["首页"])
+app.include_router(dashboard_router.router, tags=["首页"])
 app.include_router(gran_router.router, tags=["仓房管理模块"])
 app.include_router(venti_router.router, tags=["通风管理模块"])
 app.include_router(temp_router.router, tags=["测温模块"])
@@ -421,7 +419,10 @@ async def check_dev_states(index, plc_client, house_code):
             for cate in cates:
                 state_list = states_obj[cate]
                 for dev_index, state in enumerate(state_list):
-                    if state == 4: # mock 4 for test
+                    # mock for testing
+                    # if state == 4:
+                    # mock for testing
+                    if state == 6:
                         msg=f"🔴 仓房 {house_code}, 设备故障：{cate}-{dev_index+1}"
                         await gen_alarm(AlarmType.DEVICE_MALFUNCTION.name, f'{cate}-{dev_index+1}', house_code, msg)
                         logger.info(f'house-{house_code}创建alarm 设备报警 {msg}')
@@ -429,8 +430,8 @@ async def check_dev_states(index, plc_client, house_code):
                         await clear_alarm(AlarmType.DEVICE_MALFUNCTION.name, f'{cate}-{dev_index+1}', house_code)
         except Exception as e:
             logger.exception(f'############## check_dev_states in house-{house_code}发生异常: {e}, ')
-        # await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
-        await asyncio.sleep(60)
+        await asyncio.sleep(GLOBAL_POLLING_INTERVAL)
+        # await asyncio.sleep(60)
 
 async def read_temp(index, plc_client, house_code):
     while(True):
@@ -444,7 +445,7 @@ async def read_temp(index, plc_client, house_code):
             
             ext_temp_addr = get_start_reg_addr(granaries[index],'ext-temp')
             external_temp =await partial_read(index, plc_client,ext_temp_addr,1)
-            logger.info(f'ext_temp_addr: {ext_temp_addr} , external_temp:{external_temp}')
+            logger.debug(f'ext_temp_addr: {ext_temp_addr} , external_temp:{external_temp}')
             # logger.info(f'temp_data: {temp_data}')
             res =  check_cache_val(temp_data, 2000)
             if not res:

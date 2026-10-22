@@ -63,7 +63,7 @@ def generate_secure_password(length=8):
     digits = string.digits            # 数字
     special = '!@#$%'      # 特殊符号 (如 !, @, #, $ 等)  原：string.punctuation
 
-    print(f'special {special}')
+    # print(f'special {special}')
     # 步骤1：确保每种类型至少包含一个字符
     password = [
         random.choice(lower),

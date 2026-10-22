@@ -684,8 +684,8 @@ async def check_condition(request, data, flag, task_run_job):
                 logger.info(f'house {house_index +1}未满足结束条件，继续睡眠 5s')
                 await asyncio.sleep(5)
                 # mock for testing
-                if elapsed > data.get('duration') -10:
-                    data.get('end_condition')['maxMoisture']=105
+                # if elapsed > data.get('duration') -10:
+                #     data.get('end_condition')['maxMoisture']=105
                 # mock for testing
             else:
                 logger.info(f"house {house_index +1}等待结束条件超时，cancel run_job")

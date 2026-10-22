@@ -105,22 +105,23 @@ async def get_users(db: AsyncSession = Depends(database.get_db), current_user = 
     return users
 
 @router.get("/api/roles")
-async def get_roles():
+async def get_roles(current_user: models.User = Depends(check_super_admin)):
     roles = [{'name':role.name, 'desc': role.description} for role in UserRole if role.code>1] #无法添加super amdin
     return roles
 
 # 4. 创建用户（仅超级管理员）
-@router.post("/api/users", response_model=schemas.UserOut)
-async def create_user(user: schemas.UserCreate, db: AsyncSession = Depends(database.get_db), current_user: models.User = Depends(check_super_admin)):
+@router.post("/api/users")
+async def create_user(user: schemas.UserBase, db: AsyncSession = Depends(database.get_db), current_user: models.User = Depends(check_super_admin)):
     stmt = select(models.User).where(models.User.username == user.username)
     result = await db.execute(stmt)
         # scalars().all() 获取对象列表，若为空则自动返回空数组 `[]`
     db_user = result.scalars().first()
     if db_user:
         raise HTTPException(status_code=400, detail="用户名已存在")
+    passwd=generate_secure_password(8)
     new_user = models.User(
         username=user.username,
-        hashed_password=get_password_hash(user.password),
+        hashed_password=get_password_hash(passwd),
         role=user.role
     )
     # db.add(new_user)
@@ -130,7 +131,13 @@ async def create_user(user: schemas.UserCreate, db: AsyncSession = Depends(datab
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user) 
-    return new_user
+    return {
+        "code": 200, 
+        # "message": f"成功创建用户【 {user.username}】",
+        "data": {
+            "initial_password": passwd
+        }
+    }
 
 # 5. 删除用户（仅管理员）
 @router.delete("/api/users/{user_id}")
@@ -186,13 +193,6 @@ async def update_password(data: schemas.UpdatePasswordSchema, current_user: mode
     await db.refresh(current_user) 
     return {"code": 200, "message": "密码修改成功，请用新密码重新登录"}
 
-# 追加到 main.py 中
-
-# 1. 模拟管理员权限依赖项 (实际开发中应从 JWT Token 解析角色)
-# def get_current_admin_user(current_user: UserModel = Depends(is_admin)) -> UserModel:
-#     # 生产环境中这里应该判断：if "ADMIN" not in current_user.roles:
-#     # 这里做模拟演示，假设当前请求的用户具备管理员权限
-#     return current_user
 
 # 2. 管理员重置密码接口, 拦截器：确保只有管理员能调用
 @router.post("/api/admin/users/{user_id}/reset-password", )
