@@ -13,7 +13,7 @@ import jwt
 from datetime import datetime, timedelta
 from typing import List
 
-from auth_util import generate_password, is_admin
+from auth_util import  generate_secure_password, is_admin
 from enums.enum_user_role import UserRole
 import models, schemas, database
 from logger.demo_logger import logger
@@ -209,7 +209,7 @@ async def admin_reset_password(user_id: int, db: AsyncSession = Depends(database
         
     # 设置一个符合等保规范的默认初始化密码
     # DEFAULT_INITIAL_PASSWORD = "Reset@2026#Grain"
-    DEFAULT_INITIAL_PASSWORD = generate_password()
+    DEFAULT_INITIAL_PASSWORD = generate_secure_password(8)
     # 核心逻辑：重置密码，并强制将其 is_first_login 设为 True
     keeper_user.hashed_password = password_hash.hash(DEFAULT_INITIAL_PASSWORD)
     # keeper_user.is_first_login = True  # todo 1021：关键：标记为首次登录/需要强改状态, 
