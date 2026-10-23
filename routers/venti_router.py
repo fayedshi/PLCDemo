@@ -1,9 +1,10 @@
 import asyncio
 
 from fastapi import APIRouter, Depends, Request, status, Query,HTTPException
-from sqlalchemy import select, update, delete
-from typing import List
+from sqlalchemy import func, select, update, delete
+from typing import List, Optional
 from auth_util import is_admin
+from enums.enum_task_status import TaskStatus
 import models, schemas
 from database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -114,6 +115,68 @@ async def delete_granary(item_id: int, db: AsyncSession = Depends(get_db)):
     await db.execute(delete(models.VentilationMode).where(models.VentilationMode.id == item_id))
     await db.commit()
     return {"status": "success", "msg": f"成功删除 ID 为 {item_id} 的廒间"}
+
+
+@router.get("/api/ventilation_jobs", response_model=schemas.VentilationJobPageResult)
+async def get_venti_task_list(
+    house_code: Optional[str] = Query(None),
+    mode_name: Optional[str] = Query(None),
+    status_code: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        # 伪代码示例
+        where_clauses = []
+        if house_code:
+            where_clauses.append(VentiTask.house_code.like(f"%{house_code}%"))
+        if mode_name:
+            where_clauses.append(VentiTask.mode_name.like(f"%{mode_name}%"))
+        if status_code:
+            where_clauses.append(VentiTask.status_code == status_code)
+
+        
+        # 2. 异步计算总条数 (Total) —— 不加 limit 和 offset
+        count_query = select(func.count()).select_from(VentiTask)
+        logger.info(f'count query: {count_query}')
+        if where_clauses:
+            count_query = count_query.where(*where_clauses)
+        
+        count_result = await db.execute(count_query)
+        history_total = count_result.scalar_one() 
+        logger.info(f'history_total {history_total}')
+
+        # 3. 分页处理
+        # 1. 构建基础查询语句
+        data_query = select(VentiTask).order_by(desc(VentiTask.update_time))
+        if where_clauses:
+            data_query = data_query.where(*where_clauses)    
+        offset = (page - 1) * page_size        
+        data_query = data_query.offset(offset).limit(page_size)
+
+        logger.info(f'query ,{data_query}')
+        # 4. 执行异步查询并返回结果
+        data_result = await db.execute(data_query)
+        jobs= data_result.scalars().all()
+        return {
+                    "total": history_total,
+                    "items": jobs
+                }
+
+    except Exception as e:
+        logger.info(f"Service 层执行异常: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"系统内部业务处理异常 {e}"
+        )
+
+@router.get("/api/venti_status")
+async def get_venti_status():
+    # logger.info('getting venti status')
+    status_list = [{'value':status.value, 'desc': status.description} for status in TaskStatus]
+    return status_list
+
 
 @router.websocket("/ws/dev-state/{house_code}")
 async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
@@ -324,7 +387,7 @@ async def background_venti_adhoc_job(request: Request, data: dict, house_index: 
             # 步骤 A：向数据库插入初始运行记录
             init_data = {
                 'house_code': data.get('house_code'), 
-                'mode_name': None,  
+                'mode_name': '即时作业',  
                 'mode_id': -1, 
                 'status_code': 0,
                 'status_text': '运行中',

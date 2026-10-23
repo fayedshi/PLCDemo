@@ -84,7 +84,7 @@ async def get_power_supply_data(plant_code, dimension, input_time):
             # plant['code']=
             # plant['name']=item['plantName']
             # stations.append(plant)
-        logger.info(f'powerlist: {power_list}')
+        # logger.info(f'powerlist: {power_list}')
         return power_list 
     except Exception as e: 
         logger.error(f'get_power_supply_data异常 {e}')

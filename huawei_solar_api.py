@@ -105,7 +105,7 @@ class HuaweiSolarSingleAccountAPI:
                     self.xsrf_token = None
                     # raise Exception('xsrf-token无效，需重新登录fusion solar接口')
                     # await self._ensure_logged_in()
-                raise Exception(f'访问fusion solar接口异常:{response.json()['data']}')
+                raise Exception(f'访问fusion solar接口异常:{response.json()}')
             
 # 销毁时机：会伴随整个 Python 进程（Web 服务）直到程序彻底退出时才会被销毁。
 solar_api_instance = HuaweiSolarSingleAccountAPI()

@@ -137,6 +137,12 @@ class VentiTaskResponse(VentiTaskBase):
         "from_attributes": True
     }
 
+class VentilationJobPageResult(BaseModel):
+    total: int = 0  # 总数据量
+    items: List[VentiTaskResponse] = []  # 当前页的数据列表
+
+    class Config:
+        from_attributes = True
 
 
 # schemas/ca_schema.py
