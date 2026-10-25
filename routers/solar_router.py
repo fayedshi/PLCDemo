@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import httpx
+from auth_util import is_admin
 from date_util import datetime_to_ms, ms_to_datetime
 from huawei_solar_api import solar_api_instance
 
@@ -7,7 +8,7 @@ from logger.demo_logger import logger
 
 
 # router = APIRouter(prefix="/api/v1/solar", tags=["华为光伏数据"])
-router = APIRouter(tags=["华为光伏数据"])
+router = APIRouter(tags=["华为光伏数据"], dependencies=[Depends(is_admin)])
 
 BASE_URL = "https://cn.fusionsolar.huawei.com/thirdData"
 dim_fmt_map={'Day':'%Y-%m-%d',"Hour": '%Y-%m-%d %H', 'Month': '%Y-%m', 'Year':'%Y'}

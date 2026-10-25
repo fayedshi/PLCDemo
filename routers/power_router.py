@@ -16,7 +16,7 @@ batch_dev_address={'window':31,'door':32}
 
 # 显示平均功率，平均功耗
 @router.get("/api/power-trend")
-def get_power_history(request: Request,start_time: str,end_time: str, interval: str):
+def get_power_history(request: Request, house_code, start_time: str,end_time: str, interval: str):
     logger.info(f"'start_time',{start_time},interval: {interval}")
     influx_client=InfluxDBClient3(host=request.app.state.influx_db_url, token=request.app.state.influx_token, database="my_db")
 
@@ -31,6 +31,7 @@ def get_power_history(request: Request,start_time: str,end_time: str, interval: 
             ROUND(MAX(power4) - LAG(MAX(power4), 1) OVER (ORDER BY DATE_BIN(INTERVAL {interval}, time)),2) AS engery_consumption 
         FROM plc_power_data
         where 
+            station_id= '{house_code}' and 
             time between '{start}' AND '{end}'
         GROUP BY DATE_BIN(INTERVAL {interval}, time)
         order by chart_time ASC
