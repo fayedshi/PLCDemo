@@ -11,7 +11,6 @@ from logger.demo_logger import logger
 
 
 router = APIRouter(tags=["能耗监测模块"])
-batch_dev_address={'window':31,'door':32}
 
 
 # 显示平均功率，平均功耗

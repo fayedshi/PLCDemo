@@ -1,21 +1,14 @@
-from datetime import timedelta
 
-from influxdb_client_3 import InfluxDBClient3
-import numpy as np
-import pandas as pd
 
-from date_util import to_utctime
+from auth_util import is_admin
 
 from logger.demo_logger import logger
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 import httpx  # 🔑 引入专门用来在后端发请求的库
-from pydantic import BaseModel
-from typing import List
 
 
-router = APIRouter(tags=["粮仓门禁代理"])
-batch_dev_address={'window':31,'door':32}
+router = APIRouter(tags=["粮仓门禁代理"], dependencies=[Depends(is_admin)])
 
 
 # 后端自己内部掌握的第三方凭证（绝对不暴露给前端）
