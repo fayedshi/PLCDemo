@@ -31,30 +31,27 @@ granaries:
       switch:
         - 399
         - 399
-      windows:
-        start: 1
-        end: 18
-        association: 
-         - src: 2
-           target: "exhaustFans-1"
-         - src: 4
-           target: "exhaustFans-2"
-         - src: 6
-           target: "exhaustFans-3"
-         - src: 10
-           target: "exhaustFans-4"
+      windows: [1, 18]
+      fan-window:
+        src: [2, 4, 6, 10]
+        target_start: 27 #表示连续，从27开始4个数
+      blower-window:
+        src_start: 11 #windows src连续开始地址
+        src_end: 18 #windows src连续结束地址
+        target_start: 19
+        # target_end: 26
       # 风门
-      dampers:
-        - 11
-        - 18
-      # 风机
-      blowers:
-        - 19
-        - 26
-      # 排风扇
-      exhaustFans:
-        - 27
-        - 30  
+      # dampers:
+      #   - 11
+      #   - 18
+      # # 风机
+      # blowers:
+      #   - 19
+      #   - 26
+      # # 排风扇
+      # exhaustFans:
+      #   - 27
+      #   - 30  
       # 空调
       airConditioners:
         - 33
