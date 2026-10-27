@@ -32,8 +32,17 @@ granaries:
         - 399
         - 399
       windows:
-        - 1
-        - 10
+        start: 1
+        end: 18
+        association: 
+         - src: 2
+           target: "exhaustFans-1"
+         - src: 4
+           target: "exhaustFans-2"
+         - src: 6
+           target: "exhaustFans-3"
+         - src: 10
+           target: "exhaustFans-4"
       # 风门
       dampers:
         - 11
