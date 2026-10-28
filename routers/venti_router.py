@@ -189,7 +189,7 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
         # logger.info(f'dev_start: {dev_start}')
         plc_client=websocket.app.state.plc_conns[house_index]['MAIN']
         logger.info(f'plc_client: {plc_client}')
-        cates=['switch','windows', 'dampers', 'blowers','exhaustFans','airConditioners']
+        cates=['switch','windows',  'blowers','fans','ac']
         while True:
             for cate in cates:
                 if cate in states_obj:
@@ -200,7 +200,7 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
             logger.debug(f'states_buffer: {states_buffer}')
             await websocket.send_json(states_buffer)
             # send to vue every 2 sec
-            await asyncio.sleep(1)
+            await asyncio.sleep(100)
     except Exception as e:
         logger.info(f"ws/dev-state house-{house_code}客户端断开连接 : {e}")
 
@@ -208,8 +208,13 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
 @router.get("/api/dev-address/{house_code}")
 async def get_dev_addr_list(house_code):
     house_index = int(house_code) -1
-    return settings.granaries[house_index]['devices_addr']
-
+    # return settings.granaries[house_index]['devices_addr']
+    addr_obj= settings.granaries[house_index]['devices_addr']
+    # windows_obj={'windows',addr_obj['windows']}
+    # if addr_obj['fan-window']
+    key_list=['windows','fanWindow','blowerWindow','ac']
+    windows_obj= {key:addr_obj[key] for key in key_list if key in addr_obj}
+    return windows_obj
 
 #  设备控制接口
 @router.post("/api/dev/control")
