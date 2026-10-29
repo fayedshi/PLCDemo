@@ -200,7 +200,7 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
             logger.debug(f'states_buffer: {states_buffer}')
             await websocket.send_json(states_buffer)
             # send to vue every 2 sec
-            await asyncio.sleep(100)
+            await asyncio.sleep(1)
     except Exception as e:
         logger.info(f"ws/dev-state house-{house_code}客户端断开连接 : {e}")
 
@@ -212,116 +212,153 @@ async def get_dev_addr_list(house_code):
     addr_obj= settings.granaries[house_index]['devices_addr']
     # windows_obj={'windows',addr_obj['windows']}
     # if addr_obj['fan-window']
-    key_list=['windows','fanWindow','blowerWindow','ac']
-    windows_obj= {key:addr_obj[key] for key in key_list if key in addr_obj}
-    return windows_obj
+    # key_list=['windows','fanWindow','blowerWindow','ac']
+    # windows_obj= {key:addr_obj[key] for key in key_list if key in addr_obj}
+    return addr_obj
 
 #  设备控制接口
 @router.post("/api/dev/control")
-async def control_window(request: Request, data: dict, background_tasks: BackgroundTasks, admin_info = Depends(is_admin)):
-    
-    action_type = data.get('action_type')
-    dev_id = data.get('dev_id')
+async def control_window(request: Request, data: dict,  admin_info = Depends(is_admin)):
+    action = data.get('action')
+    dev_id=data.get('dev_id')
     house_index = int(data.get('house_code')) -1
+    print(f'准备写入设备id {dev_id} , action: {action}')
     job_lock = request.app.state.plc_locks[house_index]
-    
-    # todo: 加锁精确到某个设备
+    # todo: 枷锁精确到某个设备
     if job_lock.locked():
-        # running_devs_obj= request.app.state.running_devices[house_index]
-        # if dev_id:
-        #     dev_info = dev_id.split('-')
-        #     if dev_info[0] in running_devs_obj and int(dev_info[1])+1 in running_devs_obj[dev_info[0]]:
         return {
             "status": "busy", 
-            "message": f"有作业正在执行中，仓房{house_index+1} ，请稍后再试！"
+            "message": f"仓房{data.get('house_code')} 正处于通风作业中，请稍后再试！"
         }
     
-    # device_lock_obj= request.app.state.device_locks[house_index]
-    # if dev_id not in device_lock_obj:
-    #     device_lock_obj[dev_id]= asyncio.Lock()
-    # dev_lock = device_lock_obj[dev_id]
-    # if dev_lock.locked():
-
-    dev_lock = get_lock(request, dev_id, house_index)
-    if dev_lock.locked():
-        return {
-            "status": "busy", 
-            "message": f"设备{dev_id}正在运行中，请勿重复操作！"
-        }
-    # 通风作业同样不能去干扰单个设备的操作，先不加锁，因为作业耗时很久，
-    logger.info(f'house-{data.get('house_code')}准备写入设备{dev_id} , action_type: {action_type}')
     try:
         plc_client = request.app.state.plc_conns[house_index]['MAIN']
+        # logger.info('got plc client')
         if dev_id:
-            background_tasks.add_task(operate_device,request, plc_client, dev_id, house_index, action_type)
-            return {"status":"success", "message": f"已下发设备{dev_id}的开启命令！"}
+            # dev_info = dev_id.split('-')
+            await request.app.state.write_single_reg(plc_client, dev_id, action)
+            # await request.app.state.write_single_reg(plc_client, target_addr, action_type)
+            print(f'写入PLC成功，设备id {dev_id}，动作 {action}')
         else:
-            # global execution for batch devices 
+            # todo: type not passed in
             batch_dev_address={'window':31,'door':32}
             category_type = data.get('category_type')
-            await request.app.state.write_single_reg(plc_client, batch_dev_address[category_type], action_type)
-            logger.info(f'写入PLC全控设备{category_type}成功')
+            await request.app.state.write_single_reg(plc_client, batch_dev_address[category_type], action)
+            print(f'写入PLC全控设备{category_type}成功')
     except Exception as e:
-        logger.info(f"house-{data.get('house_code')} /api/dev/control 写入PLC异常: {e}")
-        return {
-            "status": "failure", 
-            "message": f"开启失败 {e}"
-        }
+        print(f"/api/dev/control 写入PLC异常: {e}")
+    return {"status":"success", "message": f"仓房{data.get('house_code')} 写入PLC成功，设备id {dev_id}，动作 {action}"}
+
+# async def write_single_reg(plc_client, start_add: int, action_val:int):
+#     # 这里容易引起问题，如果关两个窗的间隙，锁被另一个线程拿到了去开了其中一扇窗
+#     logger.info('writting registers')
+#     response = await plc_client.write_register(start_add, action_val, 1, False)
+#     logger.info('after writting registers')
+#     if response.isError():
+#         logger.error(f"写入异常 {plc_client}, response: {response}")
+#         raise Exception(f'写入异常 {plc_client}, response: {response}')
+#     else:
+#         logger.info(f"{plc_client} 写入成功，当前寄存器值:, {response}")        
+
+
+# async def control_window(request: Request, data: dict, background_tasks: BackgroundTasks, admin_info = Depends(is_admin)):
+    
+    # action_type = data.get('action_type')
+    # dev_id = data.get('dev_id')
+    # house_index = int(data.get('house_code')) -1
+    # job_lock = request.app.state.plc_locks[house_index]
+    
+    # # todo: 加锁精确到某个设备
+    # if job_lock.locked():
+    #     # running_devs_obj= request.app.state.running_devices[house_index]
+    #     # if dev_id:
+    #     #     dev_info = dev_id.split('-')
+    #     #     if dev_info[0] in running_devs_obj and int(dev_info[1])+1 in running_devs_obj[dev_info[0]]:
+    #     return {
+    #         "status": "busy", 
+    #         "message": f"有作业正在执行中，仓房{house_index+1} ，请稍后再试！"
+    #     }
+    
+    # dev_lock = get_lock(request, dev_id, house_index)
+    # if dev_lock.locked():
+    #     return {
+    #         "status": "busy", 
+    #         "message": f"设备{dev_id}正在运行中，请勿重复操作！"
+    #     }
+    # # 通风作业同样不能去干扰单个设备的操作，先不加锁，因为作业耗时很久，
+    # logger.info(f'house-{data.get('house_code')}准备写入设备{dev_id} , action_type: {action_type}')
+    # try:
+    #     plc_client = request.app.state.plc_conns[house_index]['MAIN']
+    #     if dev_id:
+    #         background_tasks.add_task(operate_device,request, plc_client, dev_id, house_index, action_type)
+    #         return {"status":"success", "message": f"已下发设备{dev_id}的开启命令！"}
+    #     else:
+    #         # global execution for batch devices 
+    #         batch_dev_address={'window':31,'door':32}
+    #         category_type = data.get('category_type')
+    #         await request.app.state.write_single_reg(plc_client, batch_dev_address[category_type], action_type)
+    #         logger.info(f'写入PLC全控设备{category_type}成功')
+    # except Exception as e:
+    #     logger.info(f"house-{data.get('house_code')} /api/dev/control 写入PLC异常: {e}")
+    #     return {
+    #         "status": "failure", 
+    #         "message": f"开启失败 {e}"
+    #     }
 
 # 先拿父级锁，再拿依赖设备的锁
-async def operate_device(request, plc_client, dev_id, house_index, action_type):
-    dev_lock = get_lock(request, dev_id, house_index)
-    if dev_lock.locked():
-        logger.info(f'{dev_id}锁目前被占用，需要等待')
-    try:
-        async with dev_lock:
-            logger.info(f'{dev_id}获得锁：{dev_lock}')
-            await _operate_device(request, plc_client, dev_id, house_index, action_type)
-        logger.info(f'{dev_id}退出锁：{dev_lock}')
-    except Exception as e:
-        logger.error(f'开启设备{dev_id}发生异常{e}')
-        raise e
+# async def operate_device(request, plc_client, dev_id, house_index, action_type):
+#     dev_lock = get_lock(request, dev_id, house_index)
+#     if dev_lock.locked():
+#         logger.info(f'{dev_id}锁目前被占用，需要等待')
+#     try:
+#         async with dev_lock:
+#             logger.info(f'{dev_id}获得锁：{dev_lock}')
+#             await _operate_device(request, plc_client, dev_id, house_index, action_type)
+#         logger.info(f'{dev_id}退出锁：{dev_lock}')
+#     except Exception as e:
+#         logger.error(f'开启设备{dev_id}发生异常{e}')
+#         raise e
 
-async def _operate_device(request, plc_client, device_id, house_index, action_type):
-    logger.info(f'操作设备:house-{house_index+1}, {device_id},  action_type: {action_type}')
-    dev_info = device_id.split('-')
-    category = dev_info[0]
-    # dev_info 为 blowers-7形式
-    offset= get_start_reg_addr(settings.granaries[house_index], category)
-    target_addr=int(dev_info[1]) + offset -1
+# async def _operate_device(request, plc_client, device_id, house_index, action_type):
+#     logger.info(f'操作设备:house-{house_index+1}, {device_id},  action_type: {action_type}')
+#     dev_info = device_id.split('-')
+#     category = dev_info[0]
+#     # dev_info 为 blowers-7形式
+#     offset= get_start_reg_addr(settings.granaries[house_index], category)
+#     target_addr=int(dev_info[1]) + offset -1
 
-    if category in ('exhaustFans', 'blowers') and action_type in (1,2):
-        # active_obj={category: [dev_info[1]], 'dampers':[dev_info[1]]}
-        #todo: apend running devices, might cause thread safe issue,  fix later
-        # request.app.state.running_devices[house_index]= request.app.state.running_devices[house_index] | active_obj
-        await operate_device(request, plc_client, f'dampers-{dev_info[1]}', house_index, 1) 
-    elif category in ('dampers'):
-        # 如果有依赖设备的锁，先要释放依赖的设备
-        is_dependent= False
-        for dev in ['exhaustFans', 'blowers']:
-            dev_lock = get_lock(request, f'{dev}-{dev_info[1]}', house_index)
-            logger.info(f' check is depdant: dev lock: {dev_lock}')
-            if dev_lock and dev_lock.locked():
-                is_dependent = True
-                break
-        logger.info(f'is_dependant: {is_dependent}')
-        if action_type ==2: #关闭风门时
-            logger.info(f'先关闭风机、排风扇, house-{house_index+1}')
-            for dev in ['exhaustFans', 'blowers']:
-                await operate_device(request, plc_client, f'{dev}-{dev_info[1]}', house_index, 3)
-        elif action_type == 1 and is_dependent: #开启风门时
-            dev_state = await read_dev_state(request, plc_client, house_index, category, int(dev_info[1]))
-            logger.info(f'当前dev_state: {dev_state}')
-            if dev_state[0] != 4:
-                logger.info(f'睡眠40s待风门开启, house-{house_index+1},{device_id}')
-                await request.app.state.write_single_reg(plc_client, target_addr, action_type)
-                await asyncio.sleep(40)
-                logger.info(f'睡眠40s结束, house-{house_index+1}, {device_id}')
-                return
-    # 其他设备操作等待一秒 
-    await request.app.state.write_single_reg(plc_client, target_addr, action_type)
-    await asyncio.sleep(1)
-    return True
+#     if category in ('exhaustFans', 'blowers') and action_type in (1,2):
+#         # active_obj={category: [dev_info[1]], 'dampers':[dev_info[1]]}
+#         #todo: apend running devices, might cause thread safe issue,  fix later
+#         # request.app.state.running_devices[house_index]= request.app.state.running_devices[house_index] | active_obj
+#         await operate_device(request, plc_client, f'dampers-{dev_info[1]}', house_index, 1) 
+#     elif category in ('dampers'):
+#         # 如果有依赖设备的锁，先要释放依赖的设备
+#         is_dependent= False
+#         for dev in ['exhaustFans', 'blowers']:
+#             dev_lock = get_lock(request, f'{dev}-{dev_info[1]}', house_index)
+#             logger.info(f' check is depdant: dev lock: {dev_lock}')
+#             if dev_lock and dev_lock.locked():
+#                 is_dependent = True
+#                 break
+#         logger.info(f'is_dependant: {is_dependent}')
+#         if action_type ==2: #关闭风门时
+#             logger.info(f'先关闭风机、排风扇, house-{house_index+1}')
+#             for dev in ['exhaustFans', 'blowers']:
+#                 await operate_device(request, plc_client, f'{dev}-{dev_info[1]}', house_index, 3)
+#         elif action_type == 1 and is_dependent: #开启风门时
+#             dev_state = await read_dev_state(request, plc_client, house_index, category, int(dev_info[1]))
+#             logger.info(f'当前dev_state: {dev_state}')
+#             if dev_state[0] != 4:
+#                 logger.info(f'睡眠40s待风门开启, house-{house_index+1},{device_id}')
+#                 await request.app.state.write_single_reg(plc_client, target_addr, action_type)
+#                 await asyncio.sleep(40)
+#                 logger.info(f'睡眠40s结束, house-{house_index+1}, {device_id}')
+#                 return
+#     # 其他设备操作等待一秒 
+#     await request.app.state.write_single_reg(plc_client, target_addr, action_type)
+#     await asyncio.sleep(1)
+#     return True
 
 def get_lock(request, dev_id, house_index):
     if dev_id not in request.app.state.device_locks[house_index]:

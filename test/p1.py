@@ -14,7 +14,9 @@ if __name__ == "__main__":
     if(-4.399999999999999 > 2.1): 
        print(True)
 
-    js_obj= {6:'apple',8:'doe'}
+    js_obj= {6:'apple',8: None}
+    print(f'js_obj: {js_obj}')
+    print('test none:', js_obj.get(8,5))
     
     print(list(js_obj.values()))
 
@@ -25,12 +27,7 @@ if __name__ == "__main__":
     for dev_index,val in enumerate(key_list):
         print(f'index: {dev_index} val: {val}')
  
-    val=0
-    try:
-        val= key_list[2]
-        
-    except Exception as  e:
-        val=None 
+
     
     print(f'val {val}')
     for key in js_obj.keys():
@@ -40,8 +37,5 @@ if __name__ == "__main__":
     if not js:
         print('test ok')
 
-    str_t=''
-    if not str_t:
-        print('empty string')
 
 

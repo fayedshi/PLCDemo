@@ -6,10 +6,10 @@ from enum import Enum
 class Device(Enum):
     # control = 1     
     windows = 1     
-    dampers = 2     
+    # dampers = 2     
     blowers = 3     
-    exhaustFans = 4   
-    airConditioners =5
+    # exhaustFans = 4   
+    ac =5
 # 2. 如何使用它？
 current_device = Device.blowers
 print(type(current_device))
@@ -25,6 +25,6 @@ for mem in Device.__members__:
 for dev in Device:
     print(f'dev full: {dev}')
 # 4. 类型安全检查
-if current_device == Device.airConditioners:
+if current_device == Device.ac:
     print("🚨 作业正在安全运行中，请勿重复触发！")
 

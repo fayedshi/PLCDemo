@@ -28,7 +28,7 @@ async def write_plc():
     await client.connect()
     print('connected to PLC')
 
-    await write_single_step(2,2)
+    await write_single_step(21,3)
     print('ready to read again')
     # await read_single_step(363,1)
 

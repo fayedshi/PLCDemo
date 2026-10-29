@@ -622,18 +622,36 @@ async def write_single_reg(plc_client, start_add: int, val:int):
     else:
         logger.info(f"{plc_client} 写入成功，当前寄存器值:, {response}")        
 
+# if __name__ == "__main__":
+#     # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
+#     config = uvicorn.Config(
+#         "plc_server:app", 
+#         host="0.0.0.0", 
+#         port=8000, 
+#         reload=False
+#     )
+#     server = uvicorn.Server(config)
+#     # uvicorn.run("plc_server:app", host="0.0.0.0", port=8000, reload=True)
+#     # 📢 核心细节 B：针对 Python 3.12+ 强行指定循环工厂
+#     # 这样既在 Windows 上使用了支持异步子进程的 ProactorLoop，又完美避开了已废弃的 set_event_loop_policy 警告
+#     if sys.platform == 'win32':
+#         # 强制利用全新的 Runner 或指定的工厂函数注入 Proactor 循环
+#         asyncio.run(server.serve(),  loop_factory=asyncio.ProactorEventLoop)
+
 if __name__ == "__main__":
-    # 核心：启动内置 Web 容器，监听 0.0.0.0 允许局域网（手机）访问
+    # 核心：啟動內置 Web 容器，監聽 0.0.0.0 允許區域網路訪問
     config = uvicorn.Config(
-        "plc_server:app", 
+        app,                # 👈 核心 B：絕對不要用 "plc_server:app" 字串，直接傳 app 物件！
         host="0.0.0.0", 
         port=8000, 
         reload=False
     )
     server = uvicorn.Server(config)
-    # uvicorn.run("plc_server:app", host="0.0.0.0", port=8000, reload=True)
-    # 📢 核心细节 B：针对 Python 3.12+ 强行指定循环工厂
-    # 这样既在 Windows 上使用了支持异步子进程的 ProactorLoop，又完美避开了已废弃的 set_event_loop_policy 警告
+    
+    # 📢 核心細節 B：針對 Python 3.12+ 強行指定循環工廠
     if sys.platform == 'win32':
-        # 强制利用全新的 Runner 或指定的工厂函数注入 Proactor 循环
-        asyncio.run(server.serve(),  loop_factory=asyncio.ProactorEventLoop)
+        # 強制利用全新的 Runner 或指定的工廠函數注入 Proactor 循環
+        asyncio.run(server.serve(), loop_factory=asyncio.ProactorEventLoop)
+    else:
+        # 非 Windows 系統（如 Linux）直接執行
+        asyncio.run(server.serve())

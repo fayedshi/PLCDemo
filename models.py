@@ -1,6 +1,7 @@
 from datetime import datetime
 from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, SmallInteger, String, Float
 from database import Base
+import aiomysql
 
 class Granary(Base):
     __tablename__ = "granary"

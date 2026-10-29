@@ -4,13 +4,20 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from pydantic_settings import BaseSettings
 import argparse
-import os
+import os, sys
 import yaml
 
 
 def load_config():
     args = read_args()
-    with open(f'{args.env}.yaml', 'r', encoding='utf-8') as file:
+    if getattr(sys, 'frozen', False):
+    # 打包後的環境
+        current_dir = os.path.dirname(sys.executable)
+    else:
+        # 本地開發環境
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+    yaml_path = os.path.join(current_dir, f'{args.env}.yaml') 
+    with open(yaml_path, 'r', encoding='utf-8') as file:
         # 2. 使用 yaml.safe_load 读取文件内容
         config_data = yaml.safe_load(file)
         return config_data
