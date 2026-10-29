@@ -40,7 +40,7 @@ class VentiConfigService:
         offset = (page - 1) * size        
         data_query = select(VentilationMode).offset(offset).limit(size)
 
-        print('query ',data_query)
+        # print('query ',data_query)
         # 4. 执行异步查询并返回结果
         data_result = await self.session.execute(data_query)
         items = data_result.scalars().all()

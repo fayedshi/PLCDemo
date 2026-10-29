@@ -16,7 +16,6 @@ router = APIRouter()
 
 @router.websocket("/ws/gas/{gran_code}")
 async def websocket_endpoint(websocket: WebSocket, gran_code: str):
-    house_index=None
     await websocket.accept()
     logger.info(f"【后端提示】/ws/gas前端house-{gran_code}客户端已连接！")
     try:

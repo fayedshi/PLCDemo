@@ -7,8 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import AlarmLog
-# 假设这是你的模型导入
-# from models import AlarmLog 
+from logger.demo_logger import logger
 
 class AlarmService:
     def __init__(self, session:AsyncSession = Depends(get_db)):
@@ -16,7 +15,7 @@ class AlarmService:
 
     async def get_history(
         self,
-        house_code: Optional[int] = None,
+        house_code: Optional[str] = None,
         severity: Optional[str] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
@@ -29,13 +28,13 @@ class AlarmService:
         
         # 2. 动态组装筛选条件
         where_clauses = []
-        if house_code is not None:
-            where_clauses.append(AlarmLog.house_id == house_code)
-        if severity is not None:
+        if house_code:
+            where_clauses.append(AlarmLog.house_code == house_code)
+        if severity:
             where_clauses.append(AlarmLog.severity == severity)
-        if start_time is not None:
+        if start_time:
             where_clauses.append(AlarmLog.trigger_time >= start_time)
-        if end_time is not None:
+        if end_time:
             where_clauses.append(AlarmLog.trigger_time <= end_time)
 
         
@@ -55,7 +54,7 @@ class AlarmService:
         offset = (page - 1) * size        
         data_query = data_query.offset(offset).limit(size)
 
-        print('query ',data_query)
+        logger.info(f'query {data_query}')
         # 4. 执行异步查询并返回结果
         data_result = await self.session.execute(data_query)
         alarms= data_result.scalars().all()

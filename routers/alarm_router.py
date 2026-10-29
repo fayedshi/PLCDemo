@@ -36,7 +36,7 @@ async def websocket_alarms_endpoint(websocket: WebSocket):
 # --- API 接口定义 ---
 @router.get("/api/alarms/history", response_model=AlarmLogResponse)
 async def get_history_alarms(
-    house_code: Optional[int] = Query(None),
+    house_code: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
     start_time: Optional[datetime] = Query(None),
     end_time: Optional[datetime] = Query(None),
@@ -48,13 +48,12 @@ async def get_history_alarms(
     try:
         # 🚀 路由层变得极其干净，只负责调用 Service 并传递参数
         alarms, alarms_total = await service.get_history(
-            house_code=house_code,
-            severity=severity,
-            start_time=start_time,
-            end_time=end_time,
-            page=page,
-            size=size
-            # page=page, size=size
+            house_code,
+            severity,
+            start_time,
+            end_time,
+            page,
+            size
         )
         # logger.info('alarms, ', alarms)
         return {
