@@ -489,7 +489,7 @@ async def run_job(request: Request, data: dict):
         house_code=data.get('house_code')
         action_obj_list= convert_dev_addr(devices, house_code, 1)
         logger.info(f'house {house_code} start action obj: {action_obj_list}')
-        await execute_commands(request, action_obj_list, house_code)
+        await execute_commands(request, action_obj_list, house_code ,1)
         logger.info(f'house {house_code} 执行开启命令完毕， 先等待45s待设备完全开启')
         await asyncio.sleep(45)
         
@@ -520,7 +520,7 @@ async def stop_job(request: Request, data: dict):
     devices = data.get('devices')
     action_obj_list = convert_dev_addr(devices,data.get('house_code'), 0)
     logger.info(f"stop_job(): house-{data.get('house_code')} action_obj: {action_obj_list}")
-    await execute_commands(request, action_obj_list, data.get('house_code'))
+    await execute_commands(request, action_obj_list, data.get('house_code'), 0)
     logger.info(f"house-{data.get('house_code')} executed stop job commands")
 
 
@@ -776,7 +776,7 @@ async def check_condition(request, data, flag, task_run_job):
                 logger.info(f'house {house_index +1}超过最长等待触发时间')
                 return 2
             if is_cond_met:
-                # logger.info(f"house {house_index +1}满足开始条件")
+                logger.info(f"house {house_index +1}满足开始条件")
                 return 0
         else:
             if is_cond_met:
@@ -872,19 +872,58 @@ async def venti_adhoc_stop(request: Request, data: dict, admin_info = Depends(is
     }
     
 
-async def execute_commands(request, action_obj_list, house_code):
-    # action_obj: [{'dampers': {12: 1, 13: 1}}, {'blowers': {20: 1, 25: 1}}, {'windows': {1: 1, 4: 1}}, {'exhaustFans': {}}, {'airConditioners': {}}]
-    house_index = int(house_code) -1
-    plc_client = request.app.state.plc_conns[house_index]['MAIN']
+# async def execute_commands(request, action_obj_list, house_code):
+#     # action_obj: [{'dampers': {12: 1, 13: 1}}, {'blowers': {20: 1, 25: 1}}, {'windows': {1: 1, 4: 1}}, {'exhaustFans': {}}, {'airConditioners': {}}]
+#     house_index = int(house_code) -1
+#     plc_client = request.app.state.plc_conns[house_index]['MAIN']
 
-    for index, obj in enumerate(action_obj_list):
-        dev_key = list(obj.keys())[0]
-        act_vals = obj.get(dev_key)
-        if not act_vals:
-            continue
-        for key, move in act_vals.items():
-            await request.app.state.write_single_reg(plc_client, int(key), move)
-            await asyncio.sleep(0.05) # 微小延时
-        if dev_key =='dampers' and index==0:
-            logger.info('To start dampers first and wait 45s ... ')
-            await asyncio.sleep(45)
+#     for index, obj in enumerate(action_obj_list):
+#         dev_key = list(obj.keys())[0]
+#         act_vals = obj.get(dev_key)
+#         if not act_vals:
+#             continue
+#         for key, move in act_vals.items():
+#             await request.app.state.write_single_reg(plc_client, int(key), move)
+#             await asyncio.sleep(0.05) # 微小延时
+#         if dev_key =='dampers' and index==0:
+#             logger.info('To start dampers first and wait 45s ... ')
+#             await asyncio.sleep(45)
+
+async def execute_commands(request, data, house_code, flag):
+    house_index = int(house_code) -1
+    main_devices=data.get('windows')
+    # acs=data.get('acs')
+    plc_client = request.app.state.plc_conns[house_index]['MAIN']
+    need_wait=False
+    tasks_groups=[]
+    for main_dev in main_devices:
+        # if window.get('fan') or window.get('blower'):
+        #     dev=window.get('fan',None) else 'blower'
+        dev_type= 'fan' if main_dev.get('fan',None) else 'blower'
+        main_action_val=main_dev['start'] if flag else main_dev.get('stop')
+        main_dev_id= main_dev.get('id')
+
+        if dev_type and main_dev.get(dev_type).get('selected',False): # fan or blower
+            sub_dev= main_dev.get(dev_type)
+            sub_dev_id=sub_dev.get('id')
+            sub_action_val=sub_dev['start'] if flag else sub_dev.get('stop')
+            # need_wait=True
+            task_operate_main_device= lambda: request.app.state.write_single_reg(plc_client, main_dev_id, main_action_val)
+            task_window_sleep = lambda: asyncio.sleep(45)
+            task_operate_sub_device= lambda: request.app.state.write_single_reg(plc_client, sub_dev_id, sub_action_val)
+            tasks=[]
+            if flag:
+                tasks=[task_operate_main_device, task_window_sleep, task_operate_sub_device] #开启设备先开窗
+            else:
+                tasks=[task_operate_sub_device, task_operate_main_device, task_window_sleep] #关闭时，先关设备
+            single_group=asyncio.create_task(run_sequence_group(tasks))
+            tasks_groups.append(single_group)
+        else: # empty window or ac
+            await request.app.state.write_single_reg(plc_client, main_dev_id, main_action_val)
+            
+    if tasks_groups:
+        await asyncio.gather(*tasks_groups)
+
+async def run_sequence_group(task_lambdas):
+    for task_lambda in task_lambdas:
+	    await task_lambda
