@@ -892,19 +892,16 @@ async def venti_adhoc_stop(request: Request, data: dict, admin_info = Depends(is
 async def execute_commands(request, data, house_code, flag):
     house_index = int(house_code) -1
     main_devices=data.get('windows')
-    # acs=data.get('acs')
     plc_client = request.app.state.plc_conns[house_index]['MAIN']
-    need_wait=False
     tasks_groups=[]
     for main_dev in main_devices:
         # if window.get('fan') or window.get('blower'):
         #     dev=window.get('fan',None) else 'blower'
-        dev_type= 'fan' if main_dev.get('fan',None) else 'blower'
-        main_action_val=main_dev['start'] if flag else main_dev.get('stop')
+        sub_dev= main_dev.get('fan') if main_dev.get('fan') else main_dev.get('blower')
+        main_action_val=main_dev.get('start') if flag else main_dev.get('stop')
         main_dev_id= main_dev.get('id')
-
-        if dev_type and main_dev.get(dev_type).get('selected',False): # fan or blower
-            sub_dev= main_dev.get(dev_type)
+        if sub_dev and sub_dev.get('selected',False): # fan or blower
+            # sub_dev= main_dev.get(sub_dev_type)
             sub_dev_id=sub_dev.get('id')
             sub_action_val=sub_dev['start'] if flag else sub_dev.get('stop')
             # need_wait=True
