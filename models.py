@@ -70,10 +70,12 @@ class VentiTask(Base):
     house_code: Mapped[str] = mapped_column(String(10), nullable=False,  comment="仓房代码")
     mode_id: Mapped[int] = mapped_column(Integer, nullable=True, comment="模式ID")
     mode_name: Mapped[str] = mapped_column(String(50), nullable=True, comment="模式名称")
+    devices: Mapped[JSON] = mapped_column(JSON, nullable=False, comment="设备列表")
     status_code: Mapped[int] = mapped_column(Integer, nullable=False, comment="状态代码")
     status_text: Mapped[str] = mapped_column(String(50), nullable=False, comment="状态信息")
-    create_time= Column(DateTime, nullable=True)
-    update_time= Column(DateTime, nullable=True)
+    # 顺便修正：将这两行旧版的 Column 改为现代的 Mapped 写法，防止加载异常
+    create_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=datetime.now)
+    update_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=datetime.now, onupdate=datetime.now)
 
     def __repr__(self) -> str:
         return f"<VentiTask(name={self.mode_name!r}, status_code={self.status_code})>"

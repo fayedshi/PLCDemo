@@ -104,12 +104,27 @@ class VentilationModePageResult(BaseModel):
 
 
 # 1. 基础模型（定义通用和核心的业务字段）
+
+
+class TaskBaseDeviceSchema(BaseModel):    
+    id: int
+    index: int
+    status: int
+    start: int
+    stop: int
+    selected: bool
+class TaskDeviceSchema(TaskBaseDeviceSchema):
+
+    # 使用 Optional 显式声明允许为 null
+    fan: TaskBaseDeviceSchema| None = None
+    blower: TaskBaseDeviceSchema | None = None 
+
 class VentiTaskBase(BaseModel):
-    # max_length=50 严格对应 String(50) 的长度校验
     house_code: str= Field(..., max_length=10, description="仓房代码")
     # 可以传None, 不能不传
     mode_id: Optional[int]
     mode_name: Optional[str] = Field(max_length=50, description="模式名称")
+    devices: List[TaskDeviceSchema] 
     status_code: int = Field(..., description="状态代码")
     status_text: str = Field(..., max_length=50, description="状态信息")
 
@@ -128,7 +143,6 @@ class VentiTaskUpdate(BaseModel):
 # 4. 响应模型（用于后端返回给前端，包含数据库自动生成的 id、时间等完整数据）
 class VentiTaskResponse(VentiTaskBase):
     id: int = Field(..., description="主键 ID")
-    # nullable=True 对应 Optional[datetime] = None
     create_time: Optional[datetime] = Field(None, description="创建时间")
     update_time: Optional[datetime] = Field(None, description="更新时间")
 
