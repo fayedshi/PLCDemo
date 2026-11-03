@@ -2,7 +2,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, Request, status, Query,HTTPException
 from sqlalchemy import func, select, update, delete
-from typing import List, Optional
+from typing import Optional
 from auth_util import is_admin
 from enums.enum_task_status import TaskStatus
 import models, schemas
@@ -10,7 +10,6 @@ from database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.venti_service import VentiConfigService
-from util import get_start_reg_addr, convert_dev_addr
 
 from fastapi import BackgroundTasks, Query, Request, WebSocket
 import asyncio
@@ -23,7 +22,6 @@ from models import VentiTask
 from schemas import VentiTaskCreate, VentiTaskResponse, VentiTaskUpdate
 
 from datetime import datetime
-from typing import List
 from logger.demo_logger import logger
 
 router = APIRouter()
@@ -405,8 +403,8 @@ async def background_venti_adhoc_job(request: Request, data: dict, house_index: 
     
     # 整个“开-等-关”全套动作上大锁，期间该仓房不允许任何其他指令插队
     async with plc_lock:
-        request.app.state.running_devices[house_index] ={}
-        request.app.state.running_devices[house_index] =data.get('devices')
+        # request.app.state.running_devices[house_index] ={}
+        # request.app.state.running_devices[house_index] =data.get('devices')
         logger.info(f'【后台】仓房 {house_index + 1} 成功获取业务大锁，准备开始作业...')
         try:
             # 步骤 A：向数据库插入初始运行记录
@@ -450,7 +448,7 @@ async def background_venti_adhoc_job(request: Request, data: dict, house_index: 
                 await stop_job(request, data)
                 # logger.info(f'house {house_index +1} 【后台】执行关闭命令完毕，等待 45s 待设备完全关闭')
                 # 保持锁，等待设备物理完全关闭
-                await asyncio.sleep(45)
+                # await asyncio.sleep(45)
             except Exception as stop_err:
                 logger.info(f'house {house_index +1}【后台】致命：安全关闭指令下发失败!! {stop_err}')
             
@@ -462,7 +460,7 @@ async def background_venti_adhoc_job(request: Request, data: dict, house_index: 
                 except Exception as db_err:
                     logger.info(f'【后台】更新数据库状态失败: {db_err}')
         # release running_devices from job
-        request.app.state.running_devices[house_index] ={}
+        # request.app.state.running_devices[house_index] ={}
         logger.info(f"【后台】仓房 {house_index + 1} 整个作业流安全退出，大锁已释放。")
 
 # 0: completed normally, 1: cancelled, 2: timeout, 3: terminated abnormally
@@ -474,7 +472,7 @@ async def run_job(request: Request, data: dict):
         # action_obj_list= convert_dev_addr(devices, house_code, 1)
         # logger.info(f'house {house_code} start action obj: {action_obj_list}')
         await execute_commands(request, data.get('devices'), house_code, flag=1)
-        logger.info(f'house {house_code} 执行开启命令完毕， 先等待45s待设备完全开启')
+        logger.info(f'house {house_code} 执行开启命令完毕， 准备运行预定时长{duration}秒')
         # await asyncio.sleep(45)
         
         elapsed=0
@@ -582,33 +580,12 @@ async def update_venti_task(task_id: int, task_data: dict):
             logger.info(f"❌ venti task 更新失败，已自动回滚: {e}")
             return False
 
-async def get_running_venti_task(house_code) -> VentiTaskResponse:
-    current_task= await get_running_db_task(house_code)
-    if not current_task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail=f"仓房 {house_code} 当前没有正在运行的通风任务"
-        )
-    # logger.info(f'current task: {current_task}')
-    return VentiTaskResponse.model_validate(current_task)
-    # async with AsyncSessionLocal() as session:
-        # try:
-        #     # 1. 构建查询语句：SELECT * FROM ventilation_jobs WHERE status_code = 5
-        #     # 如果想按时间倒序排列，可以加上 .order_by(VentiTask.create_time.desc())
-        #     stmt = select(VentiTask).where(VentiTask.status_code.in_ ([-1, 0]), VentiTask.house_code == house_code).order_by(desc(VentiTask.create_time))
-        #     # 2. 异步执行查询
-        #     result = await session.execute(stmt)
-        #     # 3. 提取所有的 ORM 对象模型
-        #     db_tasks = result.scalars().all()
-        #     # 4. 利用 Pydantic 将 ORM 对象列表批量转换为响应模型列表
-            
-        #     # model_validate 配合列表推导式非常优雅且安全
-        #     return [VentiTaskResponse.model_validate(task) for task in db_tasks]
-        #     # return db_tasks
-            
-        # except Exception as e:
-        #     logger.error(f"❌ 查询任务列表失败: {e}")
-        #     raise e
+# async def get_running_venti_task(house_code) -> VentiTaskResponse:
+#     current_task= await get_running_db_task(house_code)
+#     if not current_task:
+#         return None
+#     # logger.info(f'current task: {current_task}')
+#     return VentiTaskResponse.model_validate(current_task)
 
 async def get_running_db_task(house_code) -> VentiTask:
     async with AsyncSessionLocal() as session:
@@ -627,9 +604,11 @@ async def get_running_db_task(house_code) -> VentiTask:
 
 @router.get("/api/venti/jobs/{house_code}")
 async def venti_jobs(house_code:str):
-    running_job =await get_running_venti_task(house_code)
-    logger.info(f'running jobs {running_job}')
-    return running_job
+    # running_job =await get_running_venti_task(house_code)
+    running_job= await get_running_db_task(house_code)
+    if not running_job:
+        return None
+    return VentiTaskResponse.model_validate(running_job)
 
 
 async def check_locks(request, house_index, house_code):
@@ -681,8 +660,8 @@ async def background_venti_sched_task(request, data, house_index):
     plc_lock = request.app.state.plc_locks[house_index]
     async with plc_lock:
         try:
-            request.app.state.running_devices[house_index] ={}
-            request.app.state.running_devices[house_index] =data.get('devices')
+            # request.app.state.running_devices[house_index] ={}
+            # request.app.state.running_devices[house_index] =data.get('devices')
             # 检查开始条件
             # logger.info('开始智能作业')
             ret_code=0
@@ -725,18 +704,19 @@ async def background_venti_sched_task(request, data, house_index):
                 task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 await update_venti_task(venti_task_id, task_data)
                 logger.info(f"house {house_index +1}已更新数据库中作业状态 as {task_data['status_text']}")
-                raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="系统内部业务处理异常"
-                    )
-            else:
-                logger.info(f'准备开启作业 house {house_index+1}')
+                return
+                # raise HTTPException(
+                #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                #         detail="系统内部业务处理异常"
+                #     )
+            # else:
+            #     logger.info(f'准备开启作业 house {house_index+1}')
         # 检查结束条件
         try:
-            logger.info('检查结束条件')
+            
             task_run_job= asyncio.create_task(run_job(request, data))
             check_end_condition_task =asyncio.create_task(check_condition(request, data, 1, task_run_job))
-
+            logger.info('作业运行中，同时检查结束条件')
             task_data['status_code'] = 0
             task_data['status_text'] = '运行中'
             task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -768,7 +748,7 @@ async def background_venti_sched_task(request, data, house_index):
             task_data['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             await update_venti_task(venti_task_id, task_data)
         # release running_devices from job
-        request.app.state.running_devices[house_index] ={}
+        # request.app.state.running_devices[house_index] ={}
         
 # mode 0: ConditionUpperSilo,  1: ConditionAccumulatedHeat,  2: ConditionWholeSilo,
 # flag 0: start condition, 1: end condition
@@ -920,22 +900,18 @@ async def venti_adhoc_stop(request: Request, data: dict, admin_info = Depends(is
 
 async def execute_commands(request, main_devices, house_code, flag):
     house_index = int(house_code) -1
-    # main_devices=data.get('devices')
     plc_client = request.app.state.plc_conns[house_index]['MAIN']
-    tasks_groups=[]
     for main_dev in main_devices:
-        # if window.get('fan') or window.get('blower'):
-        #     dev=window.get('fan',None) else 'blower'
-        
+
         sub_dev= main_dev.get('fan') if main_dev.get('fan') else main_dev.get('blower')
         main_action_val=main_dev.get('start') if flag else main_dev.get('stop')
+        # logger.info(f'main action val: {main_action_val}')
         main_dev_id= main_dev.get('id')
-        logger.info(f'running device {main_dev}, sub dev {sub_dev}')
+        logger.info(f'operating device {main_dev}, sub dev {sub_dev}')
         if sub_dev and sub_dev.get('selected',False): # fan or blower
-            # sub_dev= main_dev.get(sub_dev_type)
+            
             sub_dev_id=sub_dev.get('id')
             sub_action_val=sub_dev['start'] if flag else sub_dev.get('stop')
-            # need_wait=True
             task_operate_main_device= write_single_reg(plc_client, main_dev_id, main_action_val)
             task_window_sleep = asyncio.sleep(45)
             task_operate_sub_device=  write_single_reg(plc_client, sub_dev_id, sub_action_val)
@@ -945,13 +921,9 @@ async def execute_commands(request, main_devices, house_code, flag):
             else:
                 tasks=[task_operate_sub_device, task_operate_main_device, task_window_sleep] #关闭时，先关设备
             asyncio.create_task(run_sequence_group(main_dev_id, tasks))
-            # tasks_groups.append(single_group)
         else: # empty window or ac
             logger.info(f'操作main device【{main_dev_id}】')
             await request.app.state.write_single_reg(plc_client, main_dev_id, main_action_val)
-            
-    # if tasks_groups:
-    #     await asyncio.gather(*tasks_groups)
 
 async def run_sequence_group(main_dev_id, tasks):
     for index, task in enumerate(tasks):
