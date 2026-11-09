@@ -5,7 +5,7 @@ from fastapi import APIRouter, FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pwdlib import PasswordHash
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 # from passlib.context import CryptContext
@@ -124,10 +124,6 @@ async def create_user(user: schemas.UserBase, db: AsyncSession = Depends(databas
         hashed_password=get_password_hash(passwd),
         role=user.role
     )
-    # db.add(new_user)
-    # db.commit()
-    # db.refresh(new_user)
-
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user) 
@@ -138,6 +134,28 @@ async def create_user(user: schemas.UserBase, db: AsyncSession = Depends(databas
             "initial_password": passwd
         }
     }
+
+
+# ID 修改用户信息
+@router.put("/api/users/{user_id}")
+async def update_user(user_id: int, obj_in: schemas.UserBase, db: AsyncSession = Depends(database.get_db)):
+    # 查询是否存在
+    print('查询仓房信息')
+    stmt = select(models.User).where(models.User.id == user_id)
+    db_user = (await db.execute(stmt)).scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="未找到该用户")
+        
+    # 执行更新
+    await db.execute(
+        update(models.User)
+        .where(models.User.id == user_id)
+        .values(**obj_in.model_dump(exclude={"code"})) # 工业常识：禁止通过此接口修改主键 code
+    )
+    await db.commit()
+    await db.refresh(db_user)
+    return db_user
+
 
 # 5. 删除用户（仅管理员）
 @router.delete("/api/users/{user_id}")
