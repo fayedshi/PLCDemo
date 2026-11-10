@@ -25,123 +25,91 @@ SCHED_MAX_WAIT: 30
 
 granaries:
   - code: '001'
-    PLC_IP: 192.168.0.20
-    PLC_PORT: 503
-    devices_addr:
-      switch:
-        - 399
-        - 399
-      windows: [1, 18] # 合并风门
-      fanWindow:
-        src: [2, 4, 6, 10]
-        target_start: 27 #表示连续，从27开始4个数
-      blowerWindow:
-        src_start: 11 #windows src连续开始地址
-        src_end: 18 #windows src连续结束地址
-        target_start: 19
-        # target_end: 26
-      # 风门
-      # dampers:
-      #   - 11
-      #   - 18
-      # # 风机
-      # blowers:
-      #   - 19
-      #   - 30 # 合并排风扇
-      # # 排风扇
-      # exhaustFans:
-      #   - 27
-      #   - 30  
-      # 空调
-      ac:
-        - 33
-        - 34
-      temp:
-        - 35
-        - 174
-      humid:
-        - 175
-        - 314
-      ext-temp:
-        - 361
-      ext-humid:
-        - 362
-    # 设备状态信息
-      states:
-        switch:
-          - 363
-          - 363
-        windows:
-          - 365
-          - 382
-        blowers:
-          - 383
-          - 390
-        fans:
-          - 391
-          - 394
+    PLC-Cabin-List:
+      # plc cainnet #1
+      - PLC_IP: 192.168.0.20
+        PLC_PORT: 503
+        switch: [399, 399]
+        fanWindow:
+          src: [2, 4, 6, 10]
+          target_start: 27 #表示连续，从27开始4个数
+        
+        window: [1, 18] # 合并风门
+        mapping:
+          window_src: [2, 4, 6, 10]
+          fan_start: 27  # _start表示连续的地址，从27开始，数量与window_src一致
+          valve_list: [] # list表示数组，每个元素表示一个地址, eg.[43,44, 45, 46]
+        
+        blowerWindow:
+          src_start: 11 #windows src连续开始地址
+          src_end: 18   #windows src连续结束地址
+          target_start: 19
+          # target_end: 26
+        ac: [33, 34]
+        temp:
+          - 35
+          - 174
+        humid:
+          - 175
+          - 314
+        ext-temp:
+          - 361
+        ext-humid:
+          - 362
+        # 设备状态信息
+        states:
+          switch: [363, 363]
+          windows: [365, 382]
+          blowers: [383, 390]
+          fans: [391, 394]
+          ac: [395, 396]
+        gas_detect:
+          PLC_IP: 192.168.0.22
+          PLC_PORT: 503
+          gas_start: 11
+
+      # plc cainnet #2
+      - PLC_IP: 192.168.0.20
+        PLC_PORT: 502
+        witch:
+          - 399
+          - 399
+        windows: [1, 18] # 合并风门
+        fanWindow:
+          src: [2, 4, 6, 10]
+          target_start: 27 #表示连续，从27开始4个数
+        blowerWindow:
+          src_start: 11 #windows src连续开始地址
+          src_end: 18 #windows src连续结束地址
+          target_start: 19
+          # target_end: 26
         ac:
-          - 395
-          - 396
-    gas_detect:
-      PLC_IP: '192.168.0.22'
-      PLC_PORT: 503
-      gas_start: 11
-
-  # - code: '002'
-  #   PLC_IP: 192.168.0.20
-  #   PLC_PORT: 502
-  #   devices_addr:
-  #     switch:
-  #       - 399
-  #       - 399
-  #     windows:
-  #       - 1
-  #       - 10
-  #     # 风门
-  #     dampers:
-  #       - 11
-  #       - 18
-  #     # 风机
-  #     blowers:
-  #       - 19
-  #       - 26
-  #     # 排风扇
-  #     exhaustFans:
-  #       - 27
-  #       - 30  
-  #     # 空调
-  #     airConditioners:
-  #       - 33
-  #       - 34
-  #     temp:
-  #       - 35
-  #       - 174
-  #     ext-temp:
-  #       - 361
-  #     ext-humid:
-  #       - 362
-  #     humid:
-  #       - 175
-  #       - 314
-
-  #     # 设备状态信息
-  #     states:
-  #       switch:
-  #         - 363
-  #         - 363
-  #       windows:
-  #         - 365
-  #         - 374
-  #       dampers:
-  #         - 375
-  #         - 382
-  #       blowers:
-  #         - 383
-  #         - 390
-  #       fans:
-  #         - 391
-  #         - 394
-  #       ac:
-  #         - 395
-  #         - 396
+          - 33
+          - 34
+        temp:
+          - 35
+          - 174
+        humid:
+          - 175
+          - 314
+        ext-temp:
+          - 361
+        ext-humid:
+          - 362
+      # 设备状态信息
+        states:
+          switch:
+            - 363
+            - 363
+          windows:
+            - 365
+            - 382
+          blowers:
+            - 383
+            - 390
+          fans:
+            - 391
+            - 394
+          ac:
+            - 395
+            - 396

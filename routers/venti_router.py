@@ -203,11 +203,12 @@ async def websocket_dev_state_endpoint(websocket: WebSocket, house_code):
         logger.info(f"ws/dev-state house-{house_code}客户端断开连接 : {e}")
 
 
-@router.get("/api/dev-address/{house_code}")
-async def get_dev_addr_list(house_code):
-    house_index = int(house_code) -1
+@router.get("/api/dev-address")
+async def get_dev_addr_list(house_index):
+    # house_index = int(house_index) -1
     # return settings.granaries[house_index]['devices_addr']
-    addr_obj= settings.granaries[house_index]['devices_addr']
+    addr_obj= settings.granaries[int(house_index)]
+
     # windows_obj={'windows',addr_obj['windows']}
     # if addr_obj['fan-window']
     # key_list=['windows','fanWindow','blowerWindow','ac']
