@@ -133,9 +133,9 @@ def get_history_data(request: Request,house_code: str, start_time: str,end_time:
     query = f"""
         SELECT 
             {clauses_str},
-            DATE_BIN(INTERVAL '10 minutes', a.time, TIMESTAMP '1970-01-01 00:00:00') chart_time 
+            DATE_BIN(INTERVAL '1 hour', a.time, TIMESTAMP '1970-01-01 00:00:00') chart_time 
         FROM plc_temp_data a left join plc_humid_data b 
-            on DATE_BIN(INTERVAL '10 minutes', a.time, TIMESTAMP '1970-01-01 00:00:00')=DATE_BIN(INTERVAL '10 minutes', b.time, TIMESTAMP '1970-01-01 00:00:00') 
+            on DATE_BIN(INTERVAL '1 hour', a.time, TIMESTAMP '1970-01-01 00:00:00')=DATE_BIN(INTERVAL '1 hour', b.time, TIMESTAMP '1970-01-01 00:00:00') 
         where 
             a.station_id= '{house_code}' and b.station_id= '{house_code}' and
             a.time between '{start}' AND '{end}' 
@@ -149,7 +149,7 @@ def get_history_data(request: Request,house_code: str, start_time: str,end_time:
     #     WITH temp_aligned AS (
     #         SELECT 
     #             {temp_clause_str},
-    #             DATE_BIN(INTERVAL '10 minutes', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time
+    #             DATE_BIN(INTERVAL '1 hour', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time
     #         FROM plc_temp_data
     #         WHERE time BETWEEN '{start}' AND '{end}' AND temp0 IS NOT NULL
     #         GROUP BY chart_time
@@ -157,7 +157,7 @@ def get_history_data(request: Request,house_code: str, start_time: str,end_time:
     #     humid_aligned AS (
     #         SELECT 
     #             {humid_clause_str},
-    #             DATE_BIN(INTERVAL '10 minutes', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time
+    #             DATE_BIN(INTERVAL '1 hour', time, TIMESTAMP '1970-01-01 00:00:00') AS chart_time
     #         FROM plc_humid_data
     #         WHERE time BETWEEN '{start}' AND '{end}' 
     #         GROUP BY chart_time

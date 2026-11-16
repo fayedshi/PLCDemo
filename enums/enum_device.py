@@ -8,7 +8,7 @@ class Device(Enum):
     windows = 1     
     # dampers = 2     
     blowers = 3     
-    # exhaustFans = 4   
+    fans = 4   
     ac =5
 # 2. 如何使用它？
 current_device = Device.blowers
