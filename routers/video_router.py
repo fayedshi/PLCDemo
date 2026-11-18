@@ -7,17 +7,14 @@ from requests.auth import HTTPDigestAuth
 import xml.etree.ElementTree as ET
 
 router = APIRouter()
-
-NVR_USER = "admin"
-NVR_PASS = "LC1314pp"
-NVR_IP = "192.168.0.241"
-
 # 全局状态管理字典
 channel_connections = {}  # { "live_101": [ws1, ws2] }
 ffmpeg_tasks = {}         # { "live_101": asyncio.Task } （存放异步读流任务对象）
+config_data=settings.raw_config
 
-def get_rtsp_url(channel: str) -> str:
-    return f"rtsp://{NVR_USER}:{NVR_PASS}@{NVR_IP}:554/Streaming/Channels/{channel}"
+def get_rtsp_url(channel: str, nvr_id: int) -> str:
+    nvr_obj= config_data['NVR_LIST'][nvr_id - 1]
+    return f"rtsp://{nvr_obj['USER']}:{nvr_obj['PASSWORD']}@{nvr_obj['IP']}:554/Streaming/Channels/{channel}"
 
 async def start_async_ffmpeg_engine(channel_key: str, rtsp_url: str):
     """
@@ -76,8 +73,8 @@ async def start_async_ffmpeg_engine(channel_key: str, rtsp_url: str):
     ffmpeg_tasks[channel_key] = asyncio.create_task(async_stream_pump())
 
 # 🌐 路由 1：处理实时视频流
-@router.websocket("/stream/live/{channel}")
-async def websocket_live(websocket: WebSocket, channel: str):
+@router.websocket("/stream/live/{channel}/{nvr_id}")
+async def websocket_live(websocket: WebSocket, channel: str, nvr_id: int):
     await websocket.accept()
     channel_key = f"live_{channel}"
     
@@ -85,7 +82,7 @@ async def websocket_live(websocket: WebSocket, channel: str):
         channel_connections[channel_key] = []
     channel_connections[channel_key].append(websocket)
     
-    rtsp_url = get_rtsp_url(channel)
+    rtsp_url = get_rtsp_url(channel, nvr_id)
     # 直接触发纯异步引擎
     await start_async_ffmpeg_engine(channel_key, rtsp_url)
     
@@ -96,8 +93,8 @@ async def websocket_live(websocket: WebSocket, channel: str):
         channel_connections[channel_key].remove(websocket)
 
 # 🌐 路由 2：处理历史录像回放流
-@router.websocket("/stream/playback/{channel}")
-async def websocket_playback(websocket: WebSocket, channel: str, start_time: str):
+@router.websocket("/stream/playback/{channel}/{nvr_id}")
+async def websocket_playback(websocket: WebSocket, channel: str, nvr_id: int,  start_time: str):
     await websocket.accept()
     channel_key = f"pb_{channel}_{hash(websocket)}"
     
@@ -108,7 +105,9 @@ async def websocket_playback(websocket: WebSocket, channel: str, start_time: str
     # 2026-10-07T18:00:00Z ->starttime=20261007t180000z
     # 规整海康回放时间格式 2026/10/8 020500
     # hk_time = start_time.replace("-", "").replace(":", "").lower()
-    playback_url = f"rtsp://{NVR_USER}:{NVR_PASS}@{NVR_IP}:554/Streaming/tracks/{channel}?starttime={start_time}"
+    nvr_obj= config_data['NVR_LIST'][nvr_id-1]
+
+    playback_url = f"rtsp://{nvr_obj['USER']}:{nvr_obj['PASSWORD']}@{nvr_obj['IP']}:554/Streaming/tracks/{channel}?starttime={start_time}"
     print(f"🎬 异步唤醒回放流: {playback_url}")
     
     await start_async_ffmpeg_engine(channel_key, playback_url)
