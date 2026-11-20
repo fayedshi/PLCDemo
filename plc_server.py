@@ -109,7 +109,7 @@ async def lifespan(app: FastAPI):
     logger.info("connected to mysql")
     await init_admin()
     logger.info("\n--- 📊 当前环境配置变量 ---")
-
+    polling_tasks=[]
     try:
         polling_tasks = await initialize()
         # polling_tasks=[]
@@ -151,7 +151,6 @@ app.add_middleware(
 )
 
 async def initialize():
-    polling_tasks=[]
     for index, gran in enumerate(granaries):
         silo_plc_clients=[]
         plc_client_main = AsyncModbusTcpClient(gran['PLC_IP'], port=gran['PLC_PORT'], 
@@ -160,9 +159,10 @@ async def initialize():
         )
         logger.info("【系统启动】正在尝试与 PLC 建立唯一的长连接...")
         await plc_client_main.connect()
+        house_code = gran['code']
         silo_plc_clients.append(plc_client_main)
         app.state.plc_conns[index]['MAIN']=plc_client_main
-        logger.info(f"PLC house {gran['code']}【lifespan】物理通道已建立")
+        logger.info(f"PLC house main {house_code}【lifespan】物理通道已建立")
         if 'gas_detect' in gran:
             plc_client_gas = AsyncModbusTcpClient(gran['gas_detect']['PLC_IP'], port=gran['gas_detect']['PLC_PORT'], 
                 reconnect_delay=1.0,
@@ -170,57 +170,59 @@ async def initialize():
             )
             logger.info("【系统启动】正在尝试与 PLC_GAS的长连接...")
             await plc_client_gas.connect()
-            logger.info(f"PLC_GAS house {gran['code']}【lifespan】物理通道已建立")
+            logger.info(f"PLC_GAS house {house_code}物理通道已建立")
             silo_plc_clients.append(plc_client_gas)
             app.state.plc_conns[index]['GAS']=plc_client_gas
 
         # logger.info(f'index: {index}')
         # app.state.num_ticks[index]=1
         # 从数据库中读取该仓房的温度报警上限
-        gran_list= await read_granary_max_temp(gran['code'])
+        gran_list= await read_granary_max_temp(house_code)
         if gran_list:
             app.state.TEMP_UPPER_LIMIT_LIST[index] = gran_list[0].max_temp
-            logger.info(f'temp upper limit {app.state.TEMP_UPPER_LIMIT_LIST[index]}')
+            logger.info(f'读取house-{house_code}报警温度上限：{app.state.TEMP_UPPER_LIMIT_LIST[index]}')
         else:
-            raise Exception('【ERROR：无法读取仓房温度上限】')
+            app.state.TEMP_UPPER_LIMIT_LIST[index] = gran['TEMP_UPPER_LIMIT']
+            logger.info(f'未配置廒间，采用默认温度上限{gran['TEMP_UPPER_LIMIT']}C')
         
         # 从配置文件中读取设备地址
         logger.info(f'current gran {gran}')
         app.state.dev_addrs_objects.append(gran['devices_addr'])
         logger.info(app.state.dev_addrs_objects)
         
-        # polling_job = asyncio.create_task(plc_polling_task(index, plc_client, gran['code']))
+        # polling_job = asyncio.create_task(plc_polling_task(index, plc_client, house_code))
 
-        task_check_plc_connection=asyncio.create_task(check_plc_connection(index, silo_plc_clients, gran['code']))
+        task_check_plc_connection=asyncio.create_task(check_plc_connection(index, silo_plc_clients, house_code))
 
-        task_read_dev_states=asyncio.create_task(check_dev_states(index, plc_client_main, gran['code']))
+        task_read_dev_states=asyncio.create_task(check_dev_states(index, plc_client_main, house_code))
 
-        task_read_temp=asyncio.create_task(read_temp(index, plc_client_main, gran['code']))
-        task_check_alarm =asyncio.create_task(check_temp_alarm(AlarmType.TEMP_HIGH.name, gran['code'], index))
-        task_store_temp=asyncio.create_task(store_temp(index, gran['code']))
+        task_read_temp=asyncio.create_task(read_temp(index, plc_client_main, house_code))
+        task_check_alarm =asyncio.create_task(check_temp_alarm(AlarmType.TEMP_HIGH.name, house_code, index))
+        task_store_temp=asyncio.create_task(store_temp(index, house_code))
 
-        task_read_humid=asyncio.create_task(read_humid(index, plc_client_main, gran['code']))
-        task_store_humid=asyncio.create_task(store_humid(index, gran['code']))
+        task_read_humid=asyncio.create_task(read_humid(index, plc_client_main, house_code))
+        task_store_humid=asyncio.create_task(store_humid(index, house_code))
         
-        task_read_power=asyncio.create_task(read_power(index, plc_client_main, gran['code']))
-        task_store_power=asyncio.create_task(store_power(index, gran['code']))
+        task_read_power=asyncio.create_task(read_power(index, plc_client_main, house_code))
+        task_store_power=asyncio.create_task(store_power(index, house_code))
 
-        # gas concentration reading
-        if 'gas_detect' in gran:
-            task_read_gas=asyncio.create_task(read_gas(index, plc_client_gas, gran['code']))
-            task_store_gas=asyncio.create_task(store_gas(index, gran['code']))
-
-        polling_tasks.extend([task_check_plc_connection, task_read_temp, task_check_alarm, 
+        
+        
+        polling_tasks=[task_check_plc_connection, task_read_temp, task_check_alarm, 
                 task_store_temp,
                 task_read_humid, 
                 task_store_humid, 
                 task_read_power, 
                 task_store_power,
-                task_read_gas,
-                task_store_gas,
+                # task_read_gas,
+                # task_store_gas,
                 task_read_dev_states
-                ]) 
-        
+                ]
+        if 'gas_detect' in gran:
+            # gas concentration reading
+            task_read_gas=asyncio.create_task(read_gas(index, plc_client_gas, house_code))
+            task_store_gas=asyncio.create_task(store_gas(index, house_code))
+            polling_tasks.extend([task_read_gas, task_store_gas])
     return polling_tasks
 
 async def init_admin():
@@ -332,7 +334,7 @@ async def load_dev_states(plc_client, house_index):
     # house_index = int(house_code) -1
     states_obj= settings.granaries[house_index]['devices_addr']['states']
     states_buffer_obj={}
-    # logger.info(f'dev_start: {dev_start}')
+    logger.info(f'house-{house_index+1}, states_obj: {states_obj}')
     # plc_client=websocket.app.state.plc_conns[house_index]
     # cates=['control','windows', 'dampers', 'blowers','exhaustFans','airConditioners']
     cates = [dev for dev in Device.__members__]
@@ -342,6 +344,7 @@ async def load_dev_states(plc_client, house_index):
             start=states_obj[cate][0]
             end=states_obj[cate][1]
             dev_state_cache = await partial_read(house_index, plc_client, start, end - start + 1)
+            logger.info(f'house-{house_index+1}, cate {cate}, dev_state_cache: {dev_state_cache}')
             states_buffer_obj[cate] = dev_state_cache
 
     return states_buffer_obj
@@ -415,7 +418,7 @@ async def check_dev_states(index, plc_client, house_code):
     while(True):
         try:
             states_obj= await load_dev_states(plc_client, index)
-            # logger.info(f'states_obj: {states_obj}')
+            # logger.info(f'house-{house_code}states_obj: {states_obj}')
             for cate in cates:
                 state_list = states_obj[cate]
                 for dev_index, state in enumerate(state_list):
